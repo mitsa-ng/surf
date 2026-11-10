@@ -96,6 +96,7 @@ fn restore_session(app: &AppHandle, window: &Window<Wry>) {
     crate::manager::emit_tabs(app);
 }
 
+#[cfg(desktop)]
 fn watch_resize(app: &AppHandle, window: &Window<Wry>) {
     let handle = app.clone();
     window.on_window_event(move |event| {

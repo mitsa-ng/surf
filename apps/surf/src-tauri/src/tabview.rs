@@ -24,14 +24,18 @@ impl TauriTabView {
         &self.0
     }
 
+    // Multiwebview visibility/closing is a desktop-only API.
+    #[cfg(desktop)]
     pub fn show(&self) -> Result<(), TabViewError> {
         self.0.show().map_err(|e| TabViewError::Unavailable(e.to_string()))
     }
 
+    #[cfg(desktop)]
     pub fn hide(&self) -> Result<(), TabViewError> {
         self.0.hide().map_err(|e| TabViewError::Unavailable(e.to_string()))
     }
 
+    #[cfg(desktop)]
     pub fn close(&self) -> Result<(), TabViewError> {
         self.0.close().map_err(|e| TabViewError::Unavailable(e.to_string()))
     }

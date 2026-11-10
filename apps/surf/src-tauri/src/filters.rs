@@ -65,7 +65,8 @@ impl RequestFilterAdapter for WebKitGtkAdapter {
 }
 
 pub fn platform_adapter() -> Box<dyn RequestFilterAdapter> {
-    #[cfg(target_os = "macos")]
+    // Apple platforms share WKContentRuleList: macOS, iOS, and Apple-tvOS-style builds.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     return Box::new(AppleContentRuleListAdapter);
     #[cfg(target_os = "windows")]
     return Box::new(WebView2Adapter);
@@ -73,7 +74,7 @@ pub fn platform_adapter() -> Box<dyn RequestFilterAdapter> {
     return Box::new(AndroidInterceptAdapter);
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
     return Box::new(WebKitGtkAdapter);
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "windows", target_os = "android", target_os = "linux")))]
     {
         compile_error!("Surf has no request-filter adapter for this platform");
     }

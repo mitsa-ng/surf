@@ -10,7 +10,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }
 surf-core = { workspace = true }
-rquickjs = "0.9"
+rquickjs = { version = "0.9", features = ["bindgen"] }
 adblock = "0.13"
 
 [dev-dependencies]

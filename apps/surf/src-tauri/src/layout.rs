@@ -14,6 +14,7 @@ pub const CHROME_LABEL: &str = "chrome";
 /// behind the title bar; child webviews must be pushed below it or the
 /// top of the chrome hides under the traffic lights. Measured, not
 /// hardcoded, so it follows whatever title bar style the platform uses.
+#[cfg(desktop)]
 pub fn titlebar_offset(window: &Window<Wry>) -> f64 {
     let scale = window.scale_factor().unwrap_or(1.0);
     let outer = window.outer_size().map(|s| s.to_logical::<f64>(scale)).unwrap_or_default();
@@ -21,6 +22,7 @@ pub fn titlebar_offset(window: &Window<Wry>) -> f64 {
     (outer.height - inner.height).max(0.0)
 }
 
+#[cfg(desktop)]
 pub fn relayout(app: &AppHandle) -> Result<(), tauri::Error> {
     let Some(window) = app.get_window(state::MAIN_LABEL) else {
         return Ok(());
@@ -51,6 +53,7 @@ pub fn relayout(app: &AppHandle) -> Result<(), tauri::Error> {
 
 /// Geometry for a freshly created content webview, so it lands correctly
 /// before the first resize event.
+#[cfg(desktop)]
 pub fn content_rect(window: &Window<Wry>) -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
     let scale = window.scale_factor().unwrap_or(1.0);
     let offset = titlebar_offset(window);

@@ -17,19 +17,24 @@ pub fn emit_tabs(app: &AppHandle) {
     let _ = app.emit_to("chrome", TABS_EVENT, &snapshot);
 }
 
-/// Create a tab with a fresh id and its content webview.
+/// Create a tab. Desktop attaches a content webview; mobile records the
+/// model entry only (webview-per-tab lands in M2).
 pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabId {
     let id = {
         let state = app.state::<BrowserState>();
         let id = state::lock(&state.model).open(url.clone());
         id
     };
+    #[cfg(desktop)]
     attach_webview(app, window, id, url);
+    #[cfg(not(desktop))]
+    let _ = window;
     persist_session(app);
     emit_tabs(app);
     id
 }
 
+#[cfg(desktop)]
 fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<Url>) {
     let state = app.state::<BrowserState>();
     let is_active = state::lock(&state.model).active_id() == Some(id);
@@ -99,6 +104,7 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     }
 }
 
+#[cfg(desktop)]
 pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     let closed = state::lock(&state.model).close(id).ok_or(crate::CommandError::UnknownTab(id.0))?;
@@ -116,6 +122,7 @@ pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> 
     Ok(())
 }
 
+#[cfg(desktop)]
 pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     if !state::lock(&state.model).activate(id) {
@@ -131,6 +138,7 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
     Ok(())
 }
 
+#[cfg(desktop)]
 pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::CommandError> {
     let target = match urlbox::resolve(input) {
         OmniboxResult::Navigate(url) => url,
@@ -152,6 +160,7 @@ pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::Co
     Ok(())
 }
 
+#[cfg(desktop)]
 pub fn eval_history(app: &AppHandle, id: TabId, js: &str) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     if state::lock(&state.model).get(id).is_none() {

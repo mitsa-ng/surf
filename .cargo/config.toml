@@ -1,0 +1,11 @@
+# Bindgen flags for targets where rquickjs-sys ships no prebuilt bindings.
+# The SDK/sysroot paths are machine-specific (Xcode 27.2 / NDK 27); update
+# after toolchain upgrades — see NOTES.md.
+[env]
+BINDGEN_EXTRA_CLANG_ARGS_aarch64-apple-ios-sim = "--target=aarch64-apple-ios13.0-simulator -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk"
+BINDGEN_EXTRA_CLANG_ARGS_aarch64-apple-ios = "--target=aarch64-apple-ios13.0.0 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS27.2.sdk"
+BINDGEN_EXTRA_CLANG_ARGS_x86_64-apple-ios = "--target=x86_64-apple-ios13.0-simulator -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk"
+BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android = "--target=aarch64-linux-android21 --sysroot=/Users/mac/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+BINDGEN_EXTRA_CLANG_ARGS_armv7-linux-androideabi = "--target=armv7a-linux-androideabi21 --sysroot=/Users/mac/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+BINDGEN_EXTRA_CLANG_ARGS_x86_64-linux-android = "--target=x86_64-linux-android21 --sysroot=/Users/mac/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+BINDGEN_EXTRA_CLANG_ARGS_i686-linux-android = "--target=i686-linux-android21 --sysroot=/Users/mac/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
