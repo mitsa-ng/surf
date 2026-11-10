@@ -41,6 +41,15 @@ pub struct Manifest {
     /// MV3 `action` — a popup makes the extension appear in the toolbar.
     #[serde(default)]
     pub action: Option<Action>,
+    /// Options page (MV3 `options_ui.page`); opened as its own window.
+    #[serde(default)]
+    pub options_ui: Option<OptionsUi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionsUi {
+    pub page: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

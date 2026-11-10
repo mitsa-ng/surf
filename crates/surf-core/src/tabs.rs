@@ -101,6 +101,14 @@ impl TabModel {
     }
 }
 
+/// Wall-clock ms; shared by storage and sync payloads.
+pub fn now_ms_helper() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

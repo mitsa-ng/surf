@@ -32,6 +32,7 @@ pub fn run() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("ext", ext_scheme::handle)
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
 
@@ -60,6 +61,7 @@ pub fn run() {
             commands::extension_uninstall,
             commands::extension_grant,
             commands::ext_popup_open,
+            commands::ext_options_open,
             commands::ext_api_call,
             commands::cs_bootstrap,
             commands::cs_send,
@@ -71,6 +73,8 @@ pub fn run() {
             commands::settings_set,
             commands::rules_get,
             commands::rules_set,
+            commands::sync_export,
+            commands::sync_import,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");

@@ -250,3 +250,99 @@ mod tests {
         assert!(db.bookmarks().unwrap().is_empty());
     }
 }
+
+impl Db {
+    /// Whole-user payload for file-based sync: bookmarks + history.
+    pub fn export_all(&self) -> Result<serde_json::Value> {
+        let bookmarks: Vec<serde_json::Value> = self
+            .bookmarks()?
+            .into_iter()
+            .map(|(u, t)| serde_json::json!({ "url": u.as_str(), "title": t }))
+            .collect();
+        let history: Vec<serde_json::Value> = self
+            .history_recent(100_000)?
+            .into_iter()
+            .map(|(u, t, ts)| serde_json::json!({ "url": u.as_str(), "title": t, "visitedAt": ts }))
+            .collect();
+        Ok(serde_json::json!({
+            "format": "surf-sync",
+            "version": 1,
+            "exportedAt": crate::tabs::now_ms_helper(),
+            "bookmarks": bookmarks,
+            "history": history,
+        }))
+    }
+
+    /// Merge a sync payload. Bookmarks keep the earliest created_at;
+    /// history rows dedupe on (url, visited_at).
+    pub fn import_all(&self, payload: &serde_json::Value) -> Result<(usize, usize)> {
+        let mut bookmarks_added = 0usize;
+        let mut history_added = 0usize;
+        if let Some(items) = payload.get("bookmarks").and_then(|v| v.as_array()) {
+            for item in items {
+                let url = match item.get("url").and_then(|v| v.as_str()).and_then(|u| Url::parse(u).ok()) {
+                    Some(u) => u,
+                    None => continue,
+                };
+                let title = item.get("title").and_then(|v| v.as_str());
+                let exists = self.conn
+                    .query_row("SELECT 1 FROM bookmarks WHERE url = ?1", params![url.as_str()], |_| Ok(()))
+                    .is_ok();
+                if !exists {
+                    self.add_bookmark(&url, title)?;
+                    bookmarks_added += 1;
+                }
+            }
+        }
+        if let Some(items) = payload.get("history").and_then(|v| v.as_array()) {
+            for item in items {
+                let url = match item.get("url").and_then(|v| v.as_str()).and_then(|u| Url::parse(u).ok()) {
+                    Some(u) => u,
+                    None => continue,
+                };
+                let title = item.get("title").and_then(|v| v.as_str());
+                let ts = item.get("visitedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+                let exists = self.conn
+                    .query_row(
+                        "SELECT 1 FROM history WHERE url = ?1 AND visited_at = ?2",
+                        params![url.as_str(), ts],
+                        |_| Ok(()),
+                    )
+                    .is_ok();
+                if !exists {
+                    self.conn.execute(
+                        "INSERT INTO history (url, title, visited_at) VALUES (?1, ?2, ?3)",
+                        params![url.as_str(), title, ts],
+                    )?;
+                    history_added += 1;
+                }
+            }
+        }
+        Ok((bookmarks_added, history_added))
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    #[test]
+    fn export_import_roundtrip_dedupes() {
+        let db = Db::open(":memory:").unwrap();
+        let u = Url::parse("https://sync.example/").unwrap();
+        db.add_bookmark(&u, Some("S")).unwrap();
+        db.record_visit(&u, Some("S")).unwrap();
+        let payload = db.export_all().unwrap();
+        assert_eq!(payload["format"], "surf-sync");
+        assert_eq!(payload["bookmarks"].as_array().unwrap().len(), 1);
+
+        let other = Db::open(":memory:").unwrap();
+        let (b, h) = other.import_all(&payload).unwrap();
+        assert_eq!((b, h), (1, 1));
+        // Re-import must not duplicate.
+        let (b2, h2) = other.import_all(&payload).unwrap();
+        assert_eq!((b2, h2), (0, 0));
+        assert_eq!(other.bookmarks().unwrap().len(), 1);
+        assert_eq!(other.history_recent(10).unwrap().len(), 1);
+    }
+}

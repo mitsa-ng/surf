@@ -41,6 +41,7 @@ export interface ExtensionSummary {
   id: string;
   name: string;
   version: string;
+  has_options: boolean;
 }
 
 export const extensionsList = () => invoke<ExtensionSummary[]>("extensions_list");
@@ -52,6 +53,8 @@ export const extensionUninstall = (id: string) => invoke<ExtensionSummary[]>("ex
 export const extensionGrant = (id: string, apis: string[]) => invoke<void>("extension_grant", { id, apis });
 
 export const extPopupOpen = (id: string) => invoke<void>("ext_popup_open", { id });
+
+export const extOptionsOpen = (id: string) => invoke<void>("ext_options_open", { id });
 
 export interface BookmarkRow {
   url: string;
@@ -78,3 +81,7 @@ export const rulesSet = (filters: string[]) => invoke<string[]>("rules_set", { f
 
 export const onTabsChanged = (handler: (snapshot: TabsSnapshot) => void): Promise<UnlistenFn> =>
   listen<TabsSnapshot>("tabs://changed", (event) => handler(event.payload));
+
+export const syncExport = () => invoke<string>("sync_export");
+
+export const syncImport = (path: string) => invoke<string>("sync_import", { path });

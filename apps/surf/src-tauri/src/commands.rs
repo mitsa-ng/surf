@@ -128,6 +128,7 @@ pub struct ExtensionSummary {
     pub id: String,
     pub name: String,
     pub version: String,
+    pub has_options: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -147,6 +148,7 @@ pub fn extensions_list(app: AppHandle) -> Vec<ExtensionSummary> {
             id: ext.id.0.clone(),
             name: ext.manifest.name.clone(),
             version: ext.manifest.version.clone(),
+            has_options: ext.manifest.options_ui.is_some(),
         })
         .collect()
 }
@@ -169,7 +171,12 @@ pub fn extension_install(app: AppHandle, path: String) -> Result<ExtensionSummar
     };
     state::persist_extension_state(&app);
     let ext = state::lock(&state.registry).get(&id).expect("just installed").clone();
-    Ok(ExtensionSummary { id: id.0, name: ext.manifest.name, version: ext.manifest.version })
+    Ok(ExtensionSummary {
+        id: id.0,
+        name: ext.manifest.name,
+        version: ext.manifest.version,
+        has_options: ext.manifest.options_ui.is_some(),
+    })
 }
 
 #[tauri::command]
@@ -231,6 +238,38 @@ pub fn ext_popup_open(app: AppHandle, id: String) -> Result<(), crate::CommandEr
 /// Extension pages (popup/options) call host APIs through this command;
 /// the extension id comes from the window label so the page cannot claim
 /// another extension's identity.
+/// Open the extension's options page (when the manifest declares one).
+#[tauri::command]
+pub fn ext_options_open(app: AppHandle, id: String) -> Result<(), crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let ext_id = surf_ext_host::ExtensionId(id.clone());
+    let page = {
+        let registry = state::lock(&state.registry);
+        let ext = registry
+            .get(&ext_id)
+            .ok_or_else(|| crate::CommandError::Message("unknown extension".into()))?;
+        ext.manifest
+            .options_ui
+            .as_ref()
+            .map(|o| o.page.clone())
+            .ok_or_else(|| crate::CommandError::Message("extension has no options page".into()))?
+    };
+    let label = format!("ext-options-{id}");
+    if app.get_webview_window(&label).is_some() {
+        let _ = app.get_webview_window(&label).unwrap().set_focus();
+        return Ok(());
+    }
+    let url = tauri::WebviewUrl::External(
+        url::Url::parse(&format!("ext://{id}/{page}")).map_err(|e| crate::CommandError::Message(e.to_string()))?,
+    );
+    tauri::WebviewWindowBuilder::new(&app, label, url)
+        .title("Surf 擴充功能設定")
+        .inner_size(520.0, 560.0)
+        .build()
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn ext_api_call(
     app: AppHandle,
@@ -414,4 +453,37 @@ pub fn rules_set(app: AppHandle, filters: Vec<String>) -> Result<Vec<String>, cr
     }
     let saved = crate::nav_filter::load_filters(&state::lock(&state.db));
     Ok(saved)
+}
+
+#[tauri::command]
+pub async fn sync_export(app: AppHandle) -> Result<String, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let payload = {
+        let db = state::lock(&state.db);
+        db.export_all().map_err(|e| crate::CommandError::Message(e.to_string()))?
+    };
+    let dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    let path = dir.join("surf-sync.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&payload).map_err(|e| crate::CommandError::Message(e.to_string()))?)
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub async fn sync_import(app: AppHandle, path: String) -> Result<String, crate::CommandError> {
+    let text = std::fs::read_to_string(&path).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    let payload: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| crate::CommandError::Message(format!("不是有效的 sync 檔: {e}")))?;
+    if payload.get("format").and_then(|v| v.as_str()) != Some("surf-sync") {
+        return Err(crate::CommandError::Message("不是 surf-sync 格式".into()));
+    }
+    let state = app.state::<BrowserState>();
+    let (b, h) = {
+        let db = state::lock(&state.db);
+        db.import_all(&payload).map_err(|e| crate::CommandError::Message(e.to_string()))?
+    };
+    Ok(format!("匯入完成：書籤 +{b}，瀏覽紀錄 +{h}"))
 }

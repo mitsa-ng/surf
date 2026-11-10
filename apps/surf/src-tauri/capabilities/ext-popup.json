@@ -3,6 +3,6 @@
   "identifier": "ext-popups",
   "description": "Extension popup windows (ext:// pages) may invoke host API commands.",
   "windows": [],
-  "webviews": ["ext-popup-*"],
+  "webviews": ["ext-popup-*", "ext-options-*"],
   "permissions": ["allow-ext-api-call"]
 }

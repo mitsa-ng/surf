@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ui, uninstall, openPopup, proposeInstall, confirmInstall, cancelInstall } from "../ui.svelte";
+  import { ui, uninstall, openPopup, openOptions, proposeInstall, confirmInstall, cancelInstall } from "../ui.svelte";
   import Icon from "./Icon.svelte";
 
 </script>
@@ -47,6 +47,9 @@
         <span class="name">{ext.name} <span class="version">{ext.version}</span></span>
         <span class="spacer"></span>
         <button onclick={() => openPopup(ext.id)} aria-label={`開啟 ${ext.name} popup`}>開啟</button>
+        {#if ext.has_options}
+          <button onclick={() => openOptions(ext.id)} aria-label={`開啟 ${ext.name} 設定`}>設定</button>
+        {/if}
         <button onclick={() => uninstall(ext.id)} aria-label={`移除 ${ext.name}`}>移除</button>
       </li>
     {:else}

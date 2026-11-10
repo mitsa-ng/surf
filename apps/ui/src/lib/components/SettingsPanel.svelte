@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { rulesGet, rulesSet } from "../ipc";
+  import { rulesGet, rulesSet, syncExport, syncImport } from "../ipc";
   import ExtensionsPanel from "./ExtensionsPanel.svelte";
 
   const engines = ["duckduckgo", "google", "bing"] as const;
@@ -10,6 +10,26 @@
   let loaded = false;
   let blocklist = $state("");
   let blocklistNotice = $state("");
+  let syncPath = $state("");
+  let syncNotice = $state("");
+
+  async function doExport() {
+    try {
+      syncPath = await syncExport();
+      syncNotice = `已匯出：${syncPath}`;
+    } catch (e) {
+      syncNotice = String(e);
+    }
+  }
+
+  async function doImport() {
+    if (!syncPath.trim()) return;
+    try {
+      syncNotice = await syncImport(syncPath.trim());
+    } catch (e) {
+      syncNotice = String(e);
+    }
+  }
 
   $effect(() => {
     if (!loaded) return;
@@ -49,6 +69,13 @@
       {/each}
     </select>
   </div>
+  <h3>同步（書籤＋瀏覽紀錄，檔案匯出/匯入）</h3>
+  <div class="row">
+    <button class="primary" onclick={() => doExport()}>匯出檔案</button>
+    <input class="sync-path" bind:value={syncPath} type="text" placeholder="surf-sync.json 路徑" aria-label="同步檔路徑" spellcheck="false" />
+    <button onclick={() => doImport()}>匯入</button>
+  </div>
+  {#if syncNotice}<p class="notice">{syncNotice}</p>{/if}
   <h3>封鎖清單（EasyList 語法，擋頂層導航）</h3>
   <textarea bind:value={blocklist} rows="6" spellcheck="false" aria-label="封鎖規則"></textarea>
   <div class="row">
@@ -77,6 +104,18 @@
     margin: 0 0 8px;
     font-size: 13px;
     font-weight: 600;
+  }
+  .sync-path {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: 12px ui-monospace, monospace;
+    user-select: text;
   }
   textarea {
     width: 100%;

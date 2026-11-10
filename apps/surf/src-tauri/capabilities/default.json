@@ -4,5 +4,5 @@
   "description": "The chrome/main UI webview may invoke browser commands; content webviews stay isolated from the IPC surface.",
   "windows": ["main"],
   "webviews": ["main", "chrome"],
-  "permissions": ["core:default", "allow-surf-commands"]
+  "permissions": ["core:default", "allow-surf-commands", "dialog:default"]
 }

@@ -96,6 +96,10 @@ export async function openPopup(id: string) {
   await ipc.extPopupOpen(id).catch((e) => console.error(String(e)));
 }
 
+export async function openOptions(id: string) {
+  await ipc.extOptionsOpen(id).catch((e) => console.error(String(e)));
+}
+
 export function isBookmarked(url: string | null): boolean {
   if (!url) return false;
   return ui.bookmarks.some((b) => b.url === url);
