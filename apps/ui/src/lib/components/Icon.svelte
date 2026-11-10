@@ -8,6 +8,7 @@
     plus: "M8 4.5v7M4.5 8h7",
     close: "M5 5l6 6M11 5l-6 6",
     tabs: "M3.5 5.5h9v6h-9zM5.5 3.5h7v2",
+    star: "M8 2.5l1.7 3.6 3.8.5-2.8 2.6.7 3.8L8 11.1l-3.4 1.9.7-3.8L2.5 6.6l3.8-.5z",
   } as const;
 
   export type IconName = keyof typeof paths;

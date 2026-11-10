@@ -1,4 +1,8 @@
+mod api_impl;
+mod bg;
 mod commands;
+mod content_bridge;
+mod ext_scheme;
 mod filters;
 mod layout;
 mod manager;
@@ -22,6 +26,7 @@ impl serde::Serialize for CommandError {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("ext", ext_scheme::handle)
         .setup(|app| {
             use tauri::Manager;
 
@@ -47,6 +52,18 @@ pub fn run() {
             commands::filter_capabilities,
             commands::extensions_list,
             commands::extension_install,
+            commands::extension_uninstall,
+            commands::extension_grant,
+            commands::ext_popup_open,
+            commands::ext_api_call,
+            commands::cs_bootstrap,
+            commands::cs_send,
+            commands::bookmarks_list,
+            commands::bookmarks_add,
+            commands::bookmarks_remove,
+            commands::history_recent,
+            commands::settings_get,
+            commands::settings_set,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");

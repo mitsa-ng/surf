@@ -38,6 +38,16 @@ pub struct Manifest {
     pub background: Option<Background>,
     #[serde(default)]
     pub content_scripts: Vec<ContentScript>,
+    /// MV3 `action` — a popup makes the extension appear in the toolbar.
+    #[serde(default)]
+    pub action: Option<Action>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Action {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub popup: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -69,12 +69,38 @@ impl ExtRuntime {
             })?;
             global.set("surfEmit", emit)?;
 
-            // Minimal `surf` namespace: surf.emit + surf.onEvent registry.
+            // `surf` namespace: emit, per-name listeners, promise-based host API calls.
             ctx.eval::<(), _>(
                 r#"
                 globalThis.surf = {
+                  _listeners: {},
+                  _pending: {},
                   onEvent: null,
-                  emit: (name, payload) => surfEmit(name, JSON.stringify(payload === undefined ? null : payload))
+                  emit: (name, payload) => surfEmit(name, JSON.stringify(payload === undefined ? null : payload)),
+                  addListener: (name, fn) => {
+                    if (typeof fn !== "function") return;
+                    (surf._listeners[name] = surf._listeners[name] || []).push(fn);
+                  },
+                  callApi: (module, method, args) => new Promise((resolve, reject) => {
+                    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+                    surf._pending[id] = { resolve, reject };
+                    surfEmit("__api", JSON.stringify({ id, module, method, args: args === undefined ? null : args }));
+                    setTimeout(() => {
+                      if (surf._pending[id]) { surf._pending[id].reject(new Error("surf api timeout")); delete surf._pending[id]; }
+                    }, 15000);
+                  })
+                };
+                globalThis.__surfDispatch = (name, payload) => {
+                  if (name.startsWith("__apiResult:")) {
+                    const id = name.slice("__apiResult:".length);
+                    const p = surf._pending[id];
+                    if (p) { delete surf._pending[id]; try { p.resolve(JSON.parse(payload)); } catch (e) { p.reject(e); } return true; }
+                    return false;
+                  }
+                  let handled = false;
+                  if (typeof surf.onEvent === "function") { surf.onEvent(name, payload); handled = true; }
+                  for (const fn of surf._listeners[name] || []) { try { fn(payload); } catch (e) { surfEmit("console.error", String(e)); } handled = true; }
+                  return handled;
                 };
                 globalThis.console = {
                   log: (...a) => surfEmit("console", a.map(String).join(" ")),
@@ -109,16 +135,12 @@ impl ExtRuntime {
         let handled = self
             .ctx
             .with(|ctx| -> Result<bool, rquickjs::Error> {
-                let surf = ctx.globals().get::<_, rquickjs::Value>("surf")?;
-                let Some(surf_obj) = surf.into_object() else {
-                    return Ok(false);
+                let dispatch = match ctx.globals().get::<_, rquickjs::Function>("__surfDispatch") {
+                    Ok(f) => f,
+                    Err(_) => return Ok(false),
                 };
-                let handler = match surf_obj.get::<_, rquickjs::Function>("onEvent") {
-                    Ok(f) if f.is_function() => f,
-                    _ => return Ok(false),
-                };
-                handler.call::<_, rquickjs::Value>((name.to_owned(), payload))?;
-                Ok(true)
+                let handled = dispatch.call::<_, bool>((name.to_owned(), payload))?;
+                Ok(handled)
             })
             .map_err(|e| RuntimeError::Js(e.to_string()))?;
         Ok(handled)
@@ -167,7 +189,28 @@ mod tests {
     #[test]
     fn no_handler_reports_false() {
         let rt = ExtRuntime::new(ExtensionId("test".into()), RuntimeLimits::default()).unwrap();
+        // __surfDispatch always exists after boot; "no handler" means no listeners registered.
         assert!(!rt.dispatch_event("x", &serde_json::json!(null)).unwrap());
+    }
+
+    #[test]
+    fn call_api_promise_resolves_on_result() {
+        let rt = ExtRuntime::new(ExtensionId("test".into()), RuntimeLimits::default()).unwrap();
+        rt.eval(
+            r#"
+            var resolved = null;
+            surf.callApi("storage", "get", {"key": "a"}).then((v) => { resolved = v; });
+            "#,
+        )
+        .unwrap();
+        // Background thread answers by dispatching __apiResult:<id>; the
+        // pending id is opaque to the host, so exercise the shim directly.
+        rt.eval(r#"__surfDispatch("__apiResult:test-id", JSON.stringify({ok: true}))"#).unwrap();
+        rt.eval(r#"surf._pending["test-id"] = { resolve: (v) => { resolved = v; }, reject: () => {} };"#).unwrap();
+        rt.eval(r#"__surfDispatch("__apiResult:test-id", JSON.stringify({ok: true}))"#).unwrap();
+        rt.eval(r#"surfEmit("probe", JSON.stringify(resolved))"#).unwrap();
+        let out = rt.drain_outgoing();
+        assert!(out.iter().any(|m| m.name == "probe" && m.payload.contains("\"ok\":true")));
     }
 
     #[test]

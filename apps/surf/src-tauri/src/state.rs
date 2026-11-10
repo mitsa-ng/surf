@@ -1,12 +1,18 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use surf_core::storage::Db;
 use surf_core::tabs::{TabId, TabModel, TabState};
+use surf_ext_host::permission::PermissionManager;
+use surf_ext_host::planner::InjectionPlanner;
+use surf_ext_host::router::Router;
 use surf_ext_host::Registry;
 use tauri::{AppHandle, Manager, Window, WindowBuilder, Wry};
 use url::Url;
 
+use crate::api_impl::AlarmState;
+use crate::bg::{BgMsg, BgRegistry};
+use crate::content_bridge::TokenRegistry;
 use crate::layout;
 use crate::tabview::TauriTabView;
 
@@ -18,18 +24,30 @@ pub struct TabsSnapshot {
 
 pub struct BrowserState {
     pub model: Mutex<TabModel>,
-    pub db: Mutex<Db>,
+    pub db: Arc<Mutex<Db>>,
     pub registry: Mutex<Registry>,
     pub webviews: Mutex<HashMap<TabId, TauriTabView>>,
+    pub cs_tokens: TokenRegistry,
+    pub router: Mutex<Router>,
+    pub planner: Mutex<InjectionPlanner>,
+    pub permission: Arc<Mutex<PermissionManager>>,
+    pub alarms: Arc<Mutex<HashMap<(String, String), AlarmState>>>,
+    pub bg_threads: Mutex<BgRegistry>,
 }
 
 impl BrowserState {
     pub fn new(db: Db) -> Self {
         Self {
             model: Mutex::new(TabModel::new()),
-            db: Mutex::new(db),
+            db: Arc::new(Mutex::new(db)),
             registry: Mutex::new(Registry::new()),
             webviews: Mutex::new(HashMap::new()),
+            cs_tokens: TokenRegistry::default(),
+            router: Mutex::new(Router::new()),
+            planner: Mutex::new(InjectionPlanner),
+            permission: Arc::new(Mutex::new(PermissionManager::new())),
+            alarms: Arc::new(Mutex::new(HashMap::new())),
+            bg_threads: Mutex::new(BgRegistry::default()),
         }
     }
 }
@@ -74,7 +92,119 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .build()?;
     }
 
+    restore_extensions(&handle);
+    start_alarm_scheduler(&handle);
     Ok(())
+}
+
+/// Reload persisted installs and start their background threads.
+fn restore_extensions(app: &AppHandle) {
+    let state = app.state::<BrowserState>();
+    let roots: Vec<String> = {
+        let db = lock(&state.db);
+        match db.ext_kv_get("sys", "installed") {
+            Ok(Some(json)) => serde_json::from_str(&json).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+    for root in roots {
+        let mut registry = lock(&state.registry);
+        if let Ok(id) = registry.install_dir(&root) {
+            let ext = registry.get(&id).cloned();
+            drop(registry);
+            if let Some(ext) = ext {
+                lock(&state.bg_threads).start(app, ext);
+            }
+        } else {
+            eprintln!("saved extension root missing, skipping: {root}");
+        }
+    }
+    // Remembered API grants so prompts do not reappear after restart.
+    let grants: Vec<(String, Vec<String>)> = {
+        let db = lock(&state.db);
+        match db.ext_kv_get("sys", "api_grants") {
+            Ok(Some(json)) => serde_json::from_str(&json).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+    let mut pm = lock(&state.permission);
+    for (ext, apis) in grants {
+        let id = surf_ext_host::ExtensionId(ext);
+        for api in apis {
+            pm.store_mut().grant_api(&id, &api);
+        }
+    }
+}
+
+/// Persist the install list and API grants.
+pub fn persist_extension_state(app: &AppHandle) {
+    let state = app.state::<BrowserState>();
+    let roots: Vec<String> = lock(&state.registry)
+        .list()
+        .into_iter()
+        .map(|e| e.root.to_string_lossy().into_owned())
+        .collect();
+    let grants: Vec<(String, Vec<String>)> = state
+        .permission
+        .lock()
+        .unwrap()
+        .store()
+        .api_grants()
+        .into_iter()
+        .collect();
+    let db = lock(&state.db);
+    let _ = db.ext_kv_set("sys", "installed", &serde_json::to_string(&roots).unwrap_or_default());
+    let _ = db.ext_kv_set("sys", "api_grants", &serde_json::to_string(&grants).unwrap_or_default());
+}
+
+pub fn notify_bg(app: &AppHandle, id: &surf_ext_host::ExtensionId, msg: BgMsg) {
+    let state = app.state::<BrowserState>();
+    let tx = lock(&state.bg_threads).sender(id);
+    if let Some(tx) = tx {
+        let _ = tx.send(msg);
+    }
+}
+
+/// Alarm wakeups: a single daemon thread checks due alarms once a second
+/// and delivers an `alarm` event into the owning extension's thread.
+fn start_alarm_scheduler(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::Builder::new()
+        .name("alarm-scheduler".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let state = handle.state::<BrowserState>();
+            let due: Vec<(String, String)> = {
+                let mut alarms = lock(&state.alarms);
+                let now = crate::api_impl::now_ms();
+                let mut due = Vec::new();
+                for (key, st) in alarms.iter_mut() {
+                    if st.at_ms <= now {
+                        due.push((key.0.clone(), key.1.clone()));
+                        if let Some(period) = st.period_ms {
+                            st.at_ms = now + period;
+                        }
+                    }
+                }
+                alarms.retain(|_, st| st.at_ms > now || st.period_ms.is_some());
+                due
+            };
+            for (ext, name) in due {
+                notify_bg(
+                    &handle,
+                    &surf_ext_host::ExtensionId(ext.clone()),
+                    BgMsg::Envelope(surf_ext_host::router::Envelope {
+                        from: surf_ext_host::router::Endpoint::Host,
+                        to: surf_ext_host::router::Endpoint::Extension(surf_ext_host::ExtensionId(ext)),
+                        body: surf_ext_host::router::MessageBody::Event {
+                            name: "alarm".into(),
+                            payload: serde_json::json!({ "name": name }),
+                        },
+                    }),
+                );
+            }
+        })
+        .expect("spawn alarm scheduler");
 }
 
 /// Reopen the persisted session. Fresh tab ids are fine: nothing outside

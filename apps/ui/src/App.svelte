@@ -1,17 +1,26 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { init, openTab, closeTab, tabs } from "./lib/tabs.svelte";
+  import { init, openTab, closeTab, tabs, navigateActive } from "./lib/tabs.svelte";
+  import { initUi } from "./lib/ui.svelte";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import BottomBar from "./lib/components/BottomBar.svelte";
   import TabSheet from "./lib/components/TabSheet.svelte";
+  import Panel from "./lib/components/Panel.svelte";
 
   const isMobile = isMobileDevice();
   let toolbar: Toolbar | undefined = $state();
 
   onMount(() => {
     void init();
+    void initUi();
+    const onNavigate = (e: Event) => {
+      const url = (e as CustomEvent<string>).detail;
+      if (typeof url === "string") void navigateActive(url);
+    };
+    window.addEventListener("surf:navigate", onNavigate);
+    return () => window.removeEventListener("surf:navigate", onNavigate);
   });
 
   function onKeydown(e: KeyboardEvent) {
@@ -51,6 +60,7 @@
     <TabStrip />
     <Toolbar bind:this={toolbar} />
   </header>
+  <Panel />
   <!-- Content webviews are native children positioned below this chrome;
        nothing renders here. -->
 {/if}

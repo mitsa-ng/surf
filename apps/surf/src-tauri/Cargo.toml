@@ -20,5 +20,7 @@ thiserror = { workspace = true }
 url = { workspace = true }
 surf-core = { workspace = true }
 surf-ext-host = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+rand = "0.8"
 
 [dev-dependencies]

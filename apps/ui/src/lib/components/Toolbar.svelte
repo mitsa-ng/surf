@@ -2,6 +2,7 @@
   import { tabs, navigateActive, historyAction } from "../tabs.svelte";
   import { displayAddress } from "../format";
   import Icon from "./Icon.svelte";
+  import PageActions from "./PageActions.svelte";
 
   let input = $state("");
   let focused = $state(false);
@@ -63,6 +64,7 @@
       if (e.key === "Escape") reset();
     }}
   />
+  <PageActions />
 </div>
 
 <style>

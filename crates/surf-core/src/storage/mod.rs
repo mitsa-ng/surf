@@ -32,6 +32,13 @@ const MIGRATIONS: &[&str] = &[
         title TEXT,
         created_at INTEGER NOT NULL
     );",
+    // v2: per-extension key/value storage
+    "CREATE TABLE ext_kv (
+        ext TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (ext, key)
+    );",
 ];
 
 pub struct Db {
@@ -145,6 +152,31 @@ impl Db {
             .filter_map(|(u, t)| Url::parse(&u).ok().map(|u| (u, t)))
             .collect())
     }
+
+    pub fn ext_kv_set(&self, ext: &str, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO ext_kv (ext, key, value) VALUES (?1, ?2, ?3)",
+            params![ext, key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn ext_kv_get(&self, ext: &str, key: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT value FROM ext_kv WHERE ext = ?1 AND key = ?2")?;
+        let mut rows = stmt.query_map(params![ext, key], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn ext_kv_remove(&self, ext: &str, key: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM ext_kv WHERE ext = ?1 AND key = ?2", params![ext, key])?;
+        Ok(())
+    }
+
+    pub fn ext_kv_keys(&self, ext: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT key FROM ext_kv WHERE ext = ?1 ORDER BY key")?;
+        let rows = stmt.query_map(params![ext], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
 }
 
 fn now_ms() -> i64 {
@@ -190,6 +222,20 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].0, b);
         assert_eq!(recent[1].0, a);
+    }
+
+    #[test]
+    fn ext_kv_namespaced_roundtrip() {
+        let db = Db::open(":memory:").unwrap();
+        db.ext_kv_set("e1", "k", "v1").unwrap();
+        db.ext_kv_set("e2", "k", "v2").unwrap();
+        assert_eq!(db.ext_kv_get("e1", "k").unwrap().as_deref(), Some("v1"));
+        assert_eq!(db.ext_kv_get("e2", "k").unwrap().as_deref(), Some("v2"));
+        db.ext_kv_set("e1", "k", "v1b").unwrap();
+        assert_eq!(db.ext_kv_get("e1", "k").unwrap().as_deref(), Some("v1b"));
+        assert_eq!(db.ext_kv_keys("e1").unwrap(), vec!["k".to_owned()]);
+        db.ext_kv_remove("e1", "k").unwrap();
+        assert_eq!(db.ext_kv_get("e1", "k").unwrap(), None);
     }
 
     #[test]

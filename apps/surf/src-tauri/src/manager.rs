@@ -43,12 +43,15 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
         Some(u) => tauri::WebviewUrl::External(u.clone()),
         None => tauri::WebviewUrl::App("start.html".into()),
     };
+    let token = state.cs_tokens.issue(id);
+    crate::content_bridge::register_content_sink(app, id);
 
     let handle = app.clone();
     let tab_for_load = id;
     let title_handle = app.clone();
     let tab_for_title = id;
     let builder = tauri::webview::WebviewBuilder::new(&label, webview_url)
+        .initialization_script(crate::content_bridge::bootstrap_script(&token))
         .on_page_load(move |_wv, payload| {
             let app = handle.clone();
             let url = Some(payload.url().clone());
@@ -108,6 +111,8 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
 pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     let closed = state::lock(&state.model).close(id).ok_or(crate::CommandError::UnknownTab(id.0))?;
+    state.cs_tokens.revoke(id);
+    state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
     if let Some(view) = state::take_content_webview(app, id) {
         let _ = view.close();
     }
@@ -142,7 +147,7 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
 pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::CommandError> {
     let target = match urlbox::resolve(input) {
         OmniboxResult::Navigate(url) => url,
-        OmniboxResult::Search(q) => search_url(&q),
+        OmniboxResult::Search(q) => search_url(app, &q),
     };
     let state = app.state::<BrowserState>();
     {
@@ -172,8 +177,19 @@ pub fn eval_history(app: &AppHandle, id: TabId, js: &str) -> Result<(), crate::C
     Ok(())
 }
 
-fn search_url(query: &str) -> Url {
-    Url::parse_with_params("https://duckduckgo.com/", &[("q", query)]).unwrap_or_else(|_| state::home_url())
+fn search_url(app: &AppHandle, query: &str) -> Url {
+    let engine = {
+        let state = app.state::<BrowserState>();
+        let db = state::lock(&state.db);
+        let value = db.ext_kv_get("sys", "setting:search_engine").ok().flatten();
+        value.unwrap_or_else(|| "duckduckgo".into())
+    };
+    let base = match engine.as_str() {
+        "google" => "https://www.google.com/search",
+        "bing" => "https://www.bing.com/search",
+        _ => "https://duckduckgo.com/",
+    };
+    Url::parse_with_params(base, &[("q", query)]).unwrap_or_else(|_| state::home_url())
 }
 
 pub fn persist_session(app: &AppHandle) {

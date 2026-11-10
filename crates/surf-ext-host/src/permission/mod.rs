@@ -63,6 +63,14 @@ impl MemoryGrantStore {
         // Tab-scoped access requires the "tabs" api permission in M1.
         self.has_api(ext, "tabs")
     }
+
+    /// Snapshot of granted API permissions for persistence.
+    pub fn api_grants(&self) -> Vec<(String, Vec<String>)> {
+        self.grants
+            .iter()
+            .map(|(id, g)| (id.0.clone(), g.api.iter().cloned().collect()))
+            .collect()
+    }
 }
 
 type PromptFn = Box<dyn Fn(&ExtensionId, &PermissionRequest) -> PromptDecision + Send + Sync>;
