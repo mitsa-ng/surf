@@ -93,8 +93,72 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     restore_extensions(&handle);
+    dev_auto_install(&handle);
     start_alarm_scheduler(&handle);
+    #[cfg(debug_assertions)]
+    dev_host_log_sink(&handle);
     Ok(())
+}
+
+/// Dev observability: log events extensions route to the host (console.*,
+/// errors) so extension failures are visible in the terminal.
+#[cfg(debug_assertions)]
+fn dev_host_log_sink(app: &AppHandle) {
+    let state = app.state::<BrowserState>();
+    struct LogSink;
+    impl surf_ext_host::router::MessageSink for LogSink {
+        fn deliver(&self, envelope: surf_ext_host::router::Envelope) -> Result<(), surf_ext_host::router::RouterError> {
+            if let surf_ext_host::router::MessageBody::Event { name, payload } = &envelope.body {
+                eprintln!("[ext-host] {name}: {payload}");
+            }
+            Ok(())
+        }
+    }
+    lock(&state.router).subscribe(
+        surf_ext_host::router::Endpoint::Host,
+        std::sync::Arc::new(LogSink),
+    );
+}
+
+/// SURF_DEV_EXT_PATH installs a fixture extension with full grants at
+/// startup. Dev affordance only; the release build ships without it.
+fn dev_auto_install(app: &AppHandle) {
+    let Ok(path) = std::env::var("SURF_DEV_EXT_PATH") else {
+        return;
+    };
+    let state = app.state::<BrowserState>();
+    let id = {
+        let mut registry = lock(&state.registry);
+        match registry.install_dir(&path) {
+            Ok(id) => {
+                // Grant before the thread starts: bg scripts run
+                // immediately and must see their permissions.
+                {
+                    let mut pm = lock(&state.permission);
+                    for api in ["storage", "tabs", "bookmarks", "alarms", "fetch"] {
+                        pm.store_mut().grant_api(&id, api);
+                    }
+                }
+                let ext = registry.get(&id).cloned();
+                drop(registry);
+                if let Some(ext) = ext {
+                    lock(&state.bg_threads).start(app, ext);
+                }
+                id
+            }
+            Err(e) => {
+                eprintln!("dev extension install failed: {e}");
+                return;
+            }
+        }
+    };
+    persist_extension_state(app);
+    eprintln!("dev extension installed: {}", id.0);
+    // Open the fixture popup so ext:// scheme, capability, and ext_api_call
+    // are exercised without manual UI steps.
+    if std::env::var("SURF_DEV_EXT_PATH").is_ok() {
+        let _ = crate::commands::ext_popup_open(app.clone(), id.0.clone());
+    }
 }
 
 /// Reload persisted installs and start their background threads.
@@ -107,6 +171,23 @@ fn restore_extensions(app: &AppHandle) {
             _ => Vec::new(),
         }
     };
+    // Remembered API grants first: threads read them at startup.
+    let grants: Vec<(String, Vec<String>)> = {
+        let db = lock(&state.db);
+        match db.ext_kv_get("sys", "api_grants") {
+            Ok(Some(json)) => serde_json::from_str(&json).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+    {
+        let mut pm = lock(&state.permission);
+        for (ext, apis) in grants {
+            let id = surf_ext_host::ExtensionId(ext);
+            for api in apis {
+                pm.store_mut().grant_api(&id, &api);
+            }
+        }
+    }
     for root in roots {
         let mut registry = lock(&state.registry);
         if let Ok(id) = registry.install_dir(&root) {
@@ -117,21 +198,6 @@ fn restore_extensions(app: &AppHandle) {
             }
         } else {
             eprintln!("saved extension root missing, skipping: {root}");
-        }
-    }
-    // Remembered API grants so prompts do not reappear after restart.
-    let grants: Vec<(String, Vec<String>)> = {
-        let db = lock(&state.db);
-        match db.ext_kv_get("sys", "api_grants") {
-            Ok(Some(json)) => serde_json::from_str(&json).unwrap_or_default(),
-            _ => Vec::new(),
-        }
-    };
-    let mut pm = lock(&state.permission);
-    for (ext, apis) in grants {
-        let id = surf_ext_host::ExtensionId(ext);
-        for api in apis {
-            pm.store_mut().grant_api(&id, &api);
         }
     }
 }

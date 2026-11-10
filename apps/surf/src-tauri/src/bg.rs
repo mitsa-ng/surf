@@ -84,9 +84,13 @@ fn run_ext(id: ExtensionId, ext: InstalledExtension, rx: std::sync::mpsc::Receiv
         }
 
         loop {
-            let msg = match rx.recv() {
+            let msg = match rx.recv_timeout(std::time::Duration::from_millis(300)) {
                 Ok(m) => m,
-                Err(_) => return,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    forward_outgoing(&host, &id, &runtime);
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             };
             match msg {
                 BgMsg::Reload(new_ext) => {
@@ -97,21 +101,6 @@ fn run_ext(id: ExtensionId, ext: InstalledExtension, rx: std::sync::mpsc::Receiv
                 let env_from = env.from.clone();
                 match env.body {
                     MessageBody::Event { name, payload } => {
-                        // Host-side API bridge from the shim's surf.callApi.
-                        if name == "__api" {
-                            let obj = payload.as_object().cloned().unwrap_or_default();
-                            let call_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-                            let module = obj.get("module").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-                            let method = obj.get("method").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-                            let args = obj.get("args").cloned().unwrap_or(serde_json::Value::Null);
-                            let result = host.call_api(&id, &module, &method, &args);
-                            let reply = match result {
-                                Ok(v) => serde_json::json!({ "ok": v }),
-                                Err(e) => serde_json::json!({ "error": e.to_string() }),
-                            };
-                            let _ = runtime.dispatch_event(&format!("__apiResult:{call_id}"), &reply);
-                            continue;
-                        }
                         let _ = runtime.dispatch_event(&name, &payload);
                     }
                     MessageBody::ApiCall { module, method, payload } => {
@@ -132,10 +121,37 @@ fn run_ext(id: ExtensionId, ext: InstalledExtension, rx: std::sync::mpsc::Receiv
                 }
                 }
             }
-            // Forward script-emitted events: "cs" targets one content tab,
-            // anything else goes to the host.
+            forward_outgoing(&host, &id, &runtime);
+        }
+        // Loop continues into script reload for the new manifest.
+    }
+}
+
+/// Forward script-emitted events: "cs" targets one content tab, anything
+/// else goes to the host.
+fn forward_outgoing(host: &BgHost, id: &ExtensionId, runtime: &ExtRuntime) {
+    {
             for out in runtime.drain_outgoing() {
-                let payload = serde_json::from_str::<serde_json::Value>(&out.payload).unwrap_or(serde_json::Value::Null);
+                let payload = serde_json::from_str::<serde_json::Value>(&out.payload)
+                    .unwrap_or(serde_json::Value::String(out.payload.clone()));
+                // Host API bridge: the shim's surf.callApi lands here as __api.
+                if out.name == "__api" {
+                    let obj = payload.as_object().cloned().unwrap_or_default();
+                    let call_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                    let module = obj.get("module").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                    let method = obj.get("method").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                    let args = obj.get("args").cloned().unwrap_or(serde_json::Value::Null);
+                    let result = host.call_api(id, &module, &method, &args);
+                    let reply = match result {
+                        Ok(v) => serde_json::json!({ "ok": v }),
+                        Err(e) => serde_json::json!({ "error": e.to_string() }),
+                    };
+                    let event = format!("__apiResult:{call_id}");
+                    if let Err(e) = runtime.dispatch_event(&event, &reply) {
+                        eprintln!("[ext-bg] {event} dispatch error: {e}");
+                    }
+                    continue;
+                }
                 match out.name.as_str() {
                     "cs" => {
                         let tab = payload.get("tab").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -156,8 +172,6 @@ fn run_ext(id: ExtensionId, ext: InstalledExtension, rx: std::sync::mpsc::Receiv
                     }
                 }
             }
-        }
-        // Loop continues into script reload for the new manifest.
     }
 }
 

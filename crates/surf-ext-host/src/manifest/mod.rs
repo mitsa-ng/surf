@@ -62,8 +62,11 @@ pub struct Background {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunAt {
+    #[serde(alias = "document_start")]
     DocumentStart,
+    #[serde(alias = "document_end")]
     DocumentEnd,
+    #[serde(alias = "document_idle")]
     DocumentIdle,
 }
 

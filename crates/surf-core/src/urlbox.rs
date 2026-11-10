@@ -22,7 +22,7 @@ pub fn resolve(input: &str) -> OmniboxResult {
     }
     if let Ok(url) = Url::parse(s) {
         match url.scheme() {
-            "http" | "https" | "file" | "surf" => return OmniboxResult::Navigate(url),
+            "http" | "https" | "file" | "surf" | "ext" => return OmniboxResult::Navigate(url),
             _ => {}
         }
     }

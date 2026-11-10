@@ -4,5 +4,5 @@
   "description": "Extension popup windows (ext:// pages) may invoke host API commands.",
   "windows": [],
   "webviews": ["ext-popup-*"],
-  "permissions": ["core:default"]
+  "permissions": ["allow-ext-api-call"]
 }

@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "content-bridge",
+  "description": "Content webviews may reach the two token-gated bridge commands (cs_bootstrap, cs_send); every other capability stays denied on remote pages.",
+  "windows": [],
+  "webviews": ["content-*"],
+  "remote": { "urls": ["https://*", "http://*"] },
+  "permissions": ["allow-cs-bootstrap", "allow-cs-send"]
+}

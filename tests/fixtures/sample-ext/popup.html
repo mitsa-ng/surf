@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Surf Test popup</title>
+  <style>
+    body { font: 13px -apple-system, sans-serif; padding: 12px; background: #f6f5f4; color: #1d1d1f; }
+    code { background: #ecebe9; padding: 1px 5px; border-radius: 4px; }
+  </style></head>
+  <body>
+    <p>Surf Test 擴充功能頁面</p>
+    <p>storage hits：<code id="hits">讀取中…</code></p>
+    <script>
+      // __TAURI_INTERNALS__ is available because this window has a capability.
+      window.__TAURI_INTERNALS__
+        .invoke("ext_api_call", { module: "storage", method: "get", args: { key: "hits" } })
+        .then((v) => { document.getElementById("hits").textContent = v && v.value ? v.value : "（無）"; })
+        .catch((e) => { document.getElementById("hits").textContent = "失敗：" + e; });
+    </script>
+  </body>
+</html>

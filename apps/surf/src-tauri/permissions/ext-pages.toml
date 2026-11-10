@@ -1,0 +1,5 @@
+# Extension pages (popup windows) call host APIs on their own behalf.
+[[permission]]
+identifier = "allow-ext-api-call"
+description = "Extension popup and options pages invoke namespaced host APIs"
+commands.allow = ["ext_api_call"]

@@ -1,0 +1,10 @@
+{
+  "manifestVersion": 3,
+  "name": "Surf Test",
+  "version": "0.1.0",
+  "description": "Dev fixture exercising storage, background, content-script, and popup paths.",
+  "permissions": ["storage", "tabs", "bookmarks", "alarms", "fetch"],
+  "background": { "scripts": ["bg.js"] },
+  "contentScripts": [ { "matches": ["*://*/*"], "js": ["cs.js"], "runAt": "document_idle" } ],
+  "action": { "popup": "popup.html" }
+}

@@ -1,0 +1,11 @@
+# Token-gated content-script bridge. These are the ONLY commands remote
+# pages may reach, and only from webviews labeled content-*.
+[[permission]]
+identifier = "allow-cs-bootstrap"
+description = "Content scripts fetch the scripts planned for the current URL"
+commands.allow = ["cs_bootstrap"]
+
+[[permission]]
+identifier = "allow-cs-send"
+description = "Content scripts emit router messages toward extensions or the host"
+commands.allow = ["cs_send"]

@@ -82,12 +82,11 @@ impl ExtRuntime {
                     (surf._listeners[name] = surf._listeners[name] || []).push(fn);
                   },
                   callApi: (module, method, args) => new Promise((resolve, reject) => {
+                    // No timeout: QuickJS has no timers here; a hung host
+                    // call leaves the promise pending (documented).
                     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
                     surf._pending[id] = { resolve, reject };
                     surfEmit("__api", JSON.stringify({ id, module, method, args: args === undefined ? null : args }));
-                    setTimeout(() => {
-                      if (surf._pending[id]) { surf._pending[id].reject(new Error("surf api timeout")); delete surf._pending[id]; }
-                    }, 15000);
                   })
                 };
                 globalThis.__surfDispatch = (name, payload) => {
@@ -124,11 +123,13 @@ impl ExtRuntime {
                 Ok(())
             })
             .map_err(|e| RuntimeError::Js(e.to_string()))?;
+        self.pump_jobs();
         Ok(())
     }
 
     /// Fire `surf.onEvent(name, payload)` inside the script. Returns
-    /// false when no handler is registered.
+    /// false when no handler is registered. Promise continuations queued
+    /// by the call are pumped before returning.
     pub fn dispatch_event(&self, name: &str, payload: &serde_json::Value) -> Result<bool, RuntimeError> {
         let payload = payload.to_string();
         self.budget.set(0);
@@ -143,7 +144,19 @@ impl ExtRuntime {
                 Ok(handled)
             })
             .map_err(|e| RuntimeError::Js(e.to_string()))?;
+        self.pump_jobs();
         Ok(handled)
+    }
+
+    /// QuickJS runs promise jobs only when asked; async extension code
+    /// stalls without this.
+    fn pump_jobs(&self) {
+        for _ in 0..1000 {
+            match self.rt.execute_pending_job() {
+                Ok(true) => continue,
+                _ => break,
+            }
+        }
     }
 
     pub fn drain_outgoing(&self) -> Vec<OutgoingMessage> {

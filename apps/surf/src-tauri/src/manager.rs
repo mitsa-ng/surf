@@ -34,6 +34,21 @@ pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabI
     id
 }
 
+#[cfg(all(debug_assertions, desktop))]
+fn diagnose_bridge(app: &AppHandle, id: TabId) {
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if let Some(view) = crate::state::content_webview(&handle, id) {
+            let _ = view.eval(
+                r#"document.title = "bridge:" + (document.documentElement.dataset.surfBridge || "none")"#,
+            );
+        } else {
+            return;
+        }
+    });
+}
+
 #[cfg(desktop)]
 fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<Url>) {
     let state = app.state::<BrowserState>();
@@ -100,6 +115,8 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
             if let Some(chrome) = app.get_webview(crate::layout::CHROME_LABEL) {
                 let _ = chrome.set_focus();
             }
+            #[cfg(debug_assertions)]
+            diagnose_bridge(&app.clone(), id);
         }
         Err(e) => {
             eprintln!("failed to create content webview for {id}: {e}");

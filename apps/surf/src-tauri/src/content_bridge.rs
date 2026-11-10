@@ -67,11 +67,11 @@ pub fn bootstrap_script(token: &str) -> String {
     }}
   }};
   const run = () => {{
-    if (!window.__TAURI_INTERNALS__) return;
     window.__TAURI_INTERNALS__.invoke("cs_bootstrap", {{ token: TOKEN, url: location.href }})
       .then((res) => {{
-        const idle = (res.scripts || []).filter((s) => s.run_at === "documentidle" || s.run_at === "documentend");
-        const now = (res.scripts || []).filter((s) => s.run_at !== "documentidle" && s.run_at !== "documentend");
+        document.documentElement.dataset.surfBridge = "ready";
+        const idle = (res.scripts || []).filter((s) => s.runAt === "documentidle" || s.runAt === "documentend");
+        const now = (res.scripts || []).filter((s) => s.runAt !== "documentidle" && s.runAt !== "documentend");
         evalAll(now);
         if (idle.length) {{
           const runIdle = () => evalAll(idle);
@@ -79,9 +79,19 @@ pub fn bootstrap_script(token: &str) -> String {
           else runIdle();
         }}
       }})
-      .catch((e) => console.error("surf bootstrap failed", e));
+      .catch((e) => {{
+        document.documentElement.dataset.surfBridge = "error:" + e;
+        console.error("surf bootstrap failed", e);
+      }});
   }};
-  run();
+  // Tauri's internals script may land after ours at document start; poll.
+  let tries = 0;
+  const wait = () => {{
+    if (window.__TAURI_INTERNALS__) {{ run(); return; }}
+    if (++tries > 100) {{ document.documentElement.dataset.surfBridge = "no-internals"; return; }}
+    setTimeout(wait, 50);
+  }};
+  wait();
   window.__surfReceive = (name, payload) => {{
     if (typeof window.__surfOnEvent === "function") window.__surfOnEvent(name, payload);
   }};
