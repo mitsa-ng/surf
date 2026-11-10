@@ -55,8 +55,16 @@
 - **Request filter 能力差異**：Apple WKContentRuleList 僅支援 declarative block（無 redirect/header rewrite）；WebView2 WebResourceRequested 與 Android shouldInterceptRequest 支援較完整。差異以 `FilterCapabilities` 表達，rules engine 依能力降級而非失敗。
 - **Extension engine 獨立**：surf-ext-host 只認 trait（storage、prompt），不認 Tauri 型別，未來可單獨測試/重用。
 
-## Milestone 1 範圍邊界
+## M2 狀態（已實作）
 
-- 內容腳本注入（content-script bridge token IPC）、popup/options、API Host 真實實作、rules 下載 → M2。
-- suspension/crypto/sync → trait＋stub。
-- 行動端 multi-tab → M2。
+- Extension engine 端到端：manifest→registry→背景 QuickJS（每擴充一條 OS thread＋promise pump）→權限→API Host（storage/tabs/bookmarks/alarms/fetch 真實實作）→router；content scripts 以 token bridge 注入（`cs_bootstrap`/`cs_send`，capability 僅開這兩個給遠端頁）；`ext://` scheme 服務擴充檔案；popup 視窗。
+- 桌面全功能：tabs、導航、書籤、歷史、設定（搜尋引擎＋封鎖清單）、擴充管理面板、native menus、下載事件、deep links（surf://）、macOS keychain。
+- 導航 adblock：NavFilter 專用執行緒（adblock Engine 非 Send）。
+- 行動端：tab model 端到端（Android/iOS 驗證）；build 產出 APK／Surf.app。
+
+## 範圍邊界（平台限制，誠實標明）
+
+- 行動端 per-tab webview instance（隔離＋back stack）＝M3 原生 Kotlin/Swift 工作（Tauri mobile 無單窗 multiwebview）。
+- WKContentRuleList subresource blocking、iOS/Android request-filter adapter ＝ M3。
+- suspension（wry 無 API）、sync 傳輸層＝trait 就緒待 M3。
+- content-script token 在頁面可讀（偽造限於自己的 tab）；isolated world 需平台 API。
