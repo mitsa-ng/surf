@@ -2,10 +2,13 @@ mod api_impl;
 mod bg;
 mod commands;
 mod content_bridge;
+mod deep_links;
 mod ext_scheme;
 mod filters;
+mod keychain;
 mod layout;
 mod manager;
+mod menus;
 mod state;
 mod tabview;
 
@@ -27,6 +30,7 @@ impl serde::Serialize for CommandError {
 pub fn run() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("ext", ext_scheme::handle)
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             use tauri::Manager;
 

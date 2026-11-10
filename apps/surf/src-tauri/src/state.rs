@@ -33,6 +33,10 @@ pub struct BrowserState {
     pub permission: Arc<Mutex<PermissionManager>>,
     pub alarms: Arc<Mutex<HashMap<(String, String), AlarmState>>>,
     pub bg_threads: Mutex<BgRegistry>,
+    /// Platform secret store for sync/crypto (keychain on macOS). Read
+    /// paths activate with the sync milestone.
+    #[allow(dead_code)]
+    pub secrets: std::sync::Arc<dyn surf_core::crypto::SecretStore + Send + Sync>,
 }
 
 impl BrowserState {
@@ -48,6 +52,7 @@ impl BrowserState {
             permission: Arc::new(Mutex::new(PermissionManager::new())),
             alarms: Arc::new(Mutex::new(HashMap::new())),
             bg_threads: Mutex::new(BgRegistry::default()),
+            secrets: std::sync::Arc::new(crate::keychain::KeychainStore::new("com.surf.browser")),
         }
     }
 }
@@ -83,6 +88,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
         restore_session(&handle, &window);
         watch_resize(&handle, &window);
+        if let Err(e) = crate::menus::build(&handle) {
+            eprintln!("menu build failed: {e}");
+        }
+        crate::menus::wire_events(&handle);
     }
 
     #[cfg(mobile)]
@@ -92,6 +101,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .build()?;
     }
 
+    crate::deep_links::wire(&handle);
     restore_extensions(&handle);
     dev_auto_install(&handle);
     start_alarm_scheduler(&handle);

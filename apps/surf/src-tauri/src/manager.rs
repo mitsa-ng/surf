@@ -65,8 +65,37 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     let tab_for_load = id;
     let title_handle = app.clone();
     let tab_for_title = id;
+    let download_handle = app.clone();
     let builder = tauri::webview::WebviewBuilder::new(&label, webview_url)
         .initialization_script(crate::content_bridge::bootstrap_script(&token))
+        .on_download(move |_wv, event| {
+            use tauri::Emitter;
+            match event {
+                tauri::webview::DownloadEvent::Requested { url, destination } => {
+                    // Default to a filename derived from the URL path when
+                    // the engine has no suggestion.
+                    if destination.file_name().is_none() {
+                        let name = url
+                            .path()
+                            .rsplit('/')
+                            .find(|s| !s.is_empty())
+                            .unwrap_or("download");
+                        *destination = destination.join(name);
+                    }
+                    let _ = download_handle.emit_to("chrome", "downloads://started", url.to_string());
+                    true
+                }
+                tauri::webview::DownloadEvent::Finished { url, path, success } => {
+                    let _ = download_handle.emit_to(
+                        "chrome",
+                        "downloads://finished",
+                        serde_json::json!({ "url": url.to_string(), "path": path.as_ref().map(|p| p.to_string_lossy()), "success": success }),
+                    );
+                    success
+                }
+                _ => true,
+            }
+        })
         .on_page_load(move |_wv, payload| {
             let app = handle.clone();
             let url = Some(payload.url().clone());

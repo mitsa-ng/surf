@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { init, openTab, closeTab, tabs, navigateActive } from "./lib/tabs.svelte";
-  import { initUi } from "./lib/ui.svelte";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { init, openTab, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
+  import { initUi, togglePanel } from "./lib/ui.svelte";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
@@ -20,7 +21,45 @@
       if (typeof url === "string") void navigateActive(url);
     };
     window.addEventListener("surf:navigate", onNavigate);
-    return () => window.removeEventListener("surf:navigate", onNavigate);
+    const unlisten: Promise<UnlistenFn>[] = [
+      listen<string>("menu://action", (e) => {
+        switch (e.payload) {
+          case "surf.new-tab":
+            void openTab();
+            break;
+          case "surf.close-tab":
+            if (tabs.activeId !== null) void closeTab(tabs.activeId);
+            break;
+          case "surf.reload":
+            void historyAction("reload");
+            break;
+          case "surf.bookmarks":
+            togglePanel("bookmarks");
+            break;
+          case "surf.history":
+            togglePanel("history");
+            break;
+          case "surf.extensions":
+            togglePanel("extensions");
+            break;
+          case "surf.settings":
+            togglePanel("settings");
+            break;
+        }
+      }),
+      listen<string>("deeplink://open", (e) => {
+        const url = e.payload;
+        if (url === "surf://settings") togglePanel("settings");
+        else if (url.startsWith("surf://open?url=")) {
+          const target = decodeURIComponent(url.slice("surf://open?url=".length));
+          void navigateActive(target);
+        }
+      }),
+    ];
+    return () => {
+      window.removeEventListener("surf:navigate", onNavigate);
+      void Promise.all(unlisten).then((fns) => fns.forEach((fn: UnlistenFn) => fn()));
+    };
   });
 
   function onKeydown(e: KeyboardEvent) {
