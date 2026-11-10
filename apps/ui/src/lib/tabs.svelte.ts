@@ -4,10 +4,12 @@ export const tabs = $state<{
   list: ipc.TabState[];
   activeId: number | null;
   sheetOpen: boolean;
+  error: string;
 }>({
   list: [],
   activeId: null,
   sheetOpen: false,
+  error: "",
 });
 
 let started = false;
@@ -29,7 +31,12 @@ export async function init() {
 }
 
 export async function openTab() {
-  applySnapshot(await ipc.tabOpen());
+  try {
+    applySnapshot(await ipc.tabOpen());
+    tabs.error = "";
+  } catch (e) {
+    tabs.error = String(e);
+  }
 }
 
 export async function closeTab(id: number) {

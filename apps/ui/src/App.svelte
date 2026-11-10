@@ -93,6 +93,9 @@
         <p class="mobile-note">分頁清單已啟用；每個分頁的內容 webview 在 M3 接上。</p>
         <p class="mobile-url">{activeUrl ?? "（空白分頁）"}</p>
       {/if}
+      {#if tabs.error}
+        <p class="mobile-error">{tabs.error}</p>
+      {/if}
     </div>
     <BottomBar />
   </main>
@@ -134,6 +137,12 @@
     text-align: center;
     overflow-wrap: anywhere;
     max-width: 90vw;
+  }
+  .mobile-error {
+    color: #b3261e;
+    font-size: 12px;
+    max-width: 90vw;
+    overflow-wrap: anywhere;
   }
   .mobile-url {
     font-family: ui-monospace, monospace;

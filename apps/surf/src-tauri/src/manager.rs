@@ -263,17 +263,53 @@ pub fn persist_session(app: &AppHandle) {
     }
 }
 
-// Mobile tab management at the model level. Tab state, titles, and
-// navigation targets are fully tracked; per-tab webview instances
-// (isolation, back stacks) land with the M3 native adapters.
+// Mobile instance-swap: one WebviewWindow per tab. Tauri mobile supports
+// multiple windows; switching shows the target so it takes the stack
+// front. Windows are created lazily — restoring a session only materialises
+// the active tab.
+
+#[cfg(mobile)]
+fn tab_window(app: &AppHandle, id: TabId) -> Option<tauri::WebviewWindow<Wry>> {
+    app.get_webview_window(&format!("content-{id}"))
+}
+
+#[cfg(mobile)]
+pub fn ensure_tab_window(app: &AppHandle, id: TabId, url: Option<Url>) -> Result<tauri::WebviewWindow<Wry>, tauri::Error> {
+    if let Some(w) = tab_window(app, id) {
+        return Ok(w);
+    }
+    let state = app.state::<BrowserState>();
+    let token = state.cs_tokens.issue(id);
+    crate::content_bridge::register_content_sink(app, id);
+    let webview_url = match &url {
+        Some(u) => tauri::WebviewUrl::External(u.clone()),
+        None => tauri::WebviewUrl::App("start.html".into()),
+    };
+    let window_url = match &url {
+        Some(u) => tauri::WebviewUrl::External(u.clone()),
+        None => tauri::WebviewUrl::App("start.html".into()),
+    };
+    let _ = token;
+    let _ = webview_url;
+    tauri::WebviewWindowBuilder::new(app, format!("content-{id}"), window_url)
+        .title("Surf")
+        .build()
+}
+
+#[cfg(mobile)]
+pub fn model_open(app: &AppHandle, url: Option<Url>) -> TabId {
+    let state = app.state::<BrowserState>();
+    let id = state::lock(&state.model).open(url.clone());
+    if let Some(u) = &url {
+        state::lock(&state.model).set_url(id, u.clone());
+    }
+    id
+}
 
 #[cfg(mobile)]
 pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
-    let state = app.state::<BrowserState>();
-    let id = state::lock(&state.model).open(url.clone());
-    if let Some(u) = url {
-        state::lock(&state.model).set_url(id, u);
-    }
+    let id = model_open(app, url.clone());
+    let _ = ensure_tab_window(app, id, url);
     persist_session(app);
     emit_tabs(app);
     id
@@ -282,9 +318,20 @@ pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
 #[cfg(mobile)]
 pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
-    state::lock(&state.model)
+    let closed = state::lock(&state.model)
         .close(id)
         .ok_or(crate::CommandError::UnknownTab(id.0))?;
+    state.cs_tokens.revoke(id);
+    state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
+    drop(state);
+    if let Some(w) = tab_window(app, id) {
+        let _ = w.close();
+    }
+    if let Some(next) = closed.new_active {
+        if let Some(w) = tab_window(app, next) {
+            let _ = w.show();
+        }
+    }
     persist_session(app);
     emit_tabs(app);
     Ok(())
@@ -293,8 +340,22 @@ pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::Command
 #[cfg(mobile)]
 pub fn activate_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
-    if !state::lock(&state.model).activate(id) {
-        return Err(crate::CommandError::UnknownTab(id.0));
+    let url = {
+        if !state::lock(&state.model).activate(id) {
+            return Err(crate::CommandError::UnknownTab(id.0));
+        }
+        state::lock(&state.model).get(id).and_then(|t| t.url.clone())
+    };
+    drop(state);
+    match tab_window(app, id) {
+        Some(w) => {
+            let _ = w.show();
+        }
+        None => {
+            if let Err(e) = ensure_tab_window(app, id, url) {
+                eprintln!("mobile tab window create failed: {e}");
+            }
+        }
     }
     emit_tabs(app);
     Ok(())
@@ -314,6 +375,10 @@ pub fn navigate_mobile(app: &AppHandle, id: TabId, input: &str) -> Result<(), cr
         }
         model.set_url(id, target.clone());
         model.set_loading(id, true);
+    }
+    drop(state);
+    if let Some(w) = tab_window(app, id) {
+        let _ = w.eval(format!("location.replace({:?})", target.as_str()));
     }
     emit_tabs(app);
     Ok(())

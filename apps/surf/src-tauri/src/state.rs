@@ -319,11 +319,19 @@ fn restore_session(app: &AppHandle) {
     }
     #[cfg(mobile)]
     {
+        // Model entries for every saved tab; only the active one gets a
+        // webview window now, the rest are created lazily on activate.
+        let mut last: Option<surf_core::tabs::TabId> = None;
         for tab in saved {
-            crate::manager::open_tab_mobile(app, tab.url.clone());
+            let id = crate::manager::model_open(app, tab.url.clone());
             if let Some(title) = tab.title {
-                lock(&state.model).set_title(tab.id, title);
+                lock(&state.model).set_title(id, title);
             }
+            last = Some(id);
+        }
+        if let Some(id) = last {
+            let url = lock(&state.model).get(id).and_then(|t| t.url.clone());
+            let _ = crate::manager::ensure_tab_window(app, id, url);
         }
     }
     // open_tab leaves the last one active, matching persisted order.

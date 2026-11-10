@@ -40,10 +40,12 @@
   .scrim {
     position: fixed;
     inset: 0;
+    z-index: 40;
     background: rgba(0, 0, 0, 0.32);
   }
   .sheet {
     position: fixed;
+    z-index: 41;
     left: 0;
     right: 0;
     bottom: 0;

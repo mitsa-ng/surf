@@ -40,9 +40,10 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 ## 已知限制（誠實標明）
 
-- 行動端 tab＝model 層：分頁清單/狀態/標題完整，但內容 webview 的 per-tab instance（隔離＋back stack）是 M3 原生工作。
+- 行動端 tab＝model 層＋per-tab WebviewWindow instance-swap（程式碼完成、雙 target 編譯過）；模擬器上的 runtime 切換驗證受阻於 swiftshader 的 tap 自動化（EGL 座標漂移），需實機測試。
 - `cs_send` 的 token 在頁面 context 可讀——頁面可為「自己的 tab」偽造訊息；真正 isolated world 需平台 API。
 - iOS/Android 的 request-filter adapter 仍是 NotImplemented stub（`FilterCapabilities` 已表達差異）；macOS 導航層 block 已可用。
 - WKContentRuleList 整合（subresource blocking）＝M3。
-- Android APK 未簽名（release engineering）。
-- sync/crypto：trait＋keychain 就緒，傳輸與合併邏輯未做。
+- Android APK：release keystore 在 `~/surf-release.keystore`（alias `surf`，密碼 surf-release-2026）；`zipalign`＋`apksigner verify` 流程已驗證。
+- sync/crypto：檔案匯出/匯入（書籤＋歷史，去重合併）已完成；裝置間自動同步仍待做。
+- Desktop release build：`target/release/surf-app` 已產出（bundle.active=false，只有 binary）。
