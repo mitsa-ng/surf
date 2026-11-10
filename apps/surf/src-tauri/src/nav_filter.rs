@@ -65,6 +65,19 @@ fn run_engine(rx: Receiver<Query>, filters: Vec<String>) {
     }
 }
 
+/// Load the persisted filter list (one EasyList-syntax rule per line).
+pub fn load_filters(db: &surf_core::storage::Db) -> Vec<String> {
+    db.ext_kv_get("sys", "nav_filters")
+        .ok()
+        .flatten()
+        .map(|text| text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('!')).map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+pub fn save_filters(db: &surf_core::storage::Db, filters: &[String]) -> Result<(), surf_core::storage::StorageError> {
+    db.ext_kv_set("sys", "nav_filters", &filters.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,17 +98,4 @@ mod tests {
         let f = NavFilter::default();
         assert!(f.allows(&Url::parse("https://anything.example/").unwrap()));
     }
-}
-
-/// Load the persisted filter list (one EasyList-syntax rule per line).
-pub fn load_filters(db: &surf_core::storage::Db) -> Vec<String> {
-    db.ext_kv_get("sys", "nav_filters")
-        .ok()
-        .flatten()
-        .map(|text| text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('!')).map(str::to_owned).collect())
-        .unwrap_or_default()
-}
-
-pub fn save_filters(db: &surf_core::storage::Db, filters: &[String]) -> Result<(), surf_core::storage::StorageError> {
-    db.ext_kv_set("sys", "nav_filters", &filters.join("\n"))
 }
