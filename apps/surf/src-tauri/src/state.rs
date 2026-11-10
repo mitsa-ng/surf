@@ -37,6 +37,8 @@ pub struct BrowserState {
     /// paths activate with the sync milestone.
     #[allow(dead_code)]
     pub secrets: std::sync::Arc<dyn surf_core::crypto::SecretStore + Send + Sync>,
+    /// Top-level navigation filter engine (dedicated thread).
+    pub nav_filter: crate::nav_filter::NavFilter,
 }
 
 impl BrowserState {
@@ -53,6 +55,7 @@ impl BrowserState {
             alarms: Arc::new(Mutex::new(HashMap::new())),
             bg_threads: Mutex::new(BgRegistry::default()),
             secrets: std::sync::Arc::new(crate::keychain::KeychainStore::new("com.surf.browser")),
+            nav_filter: crate::nav_filter::NavFilter::default(),
         }
     }
 }
@@ -102,6 +105,13 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     crate::deep_links::wire(&handle);
+    {
+        let state = app.state::<BrowserState>();
+        let filters = crate::nav_filter::load_filters(&lock(&state.db));
+        if !filters.is_empty() {
+            state.nav_filter.start(filters);
+        }
+    }
     restore_extensions(&handle);
     dev_auto_install(&handle);
     start_alarm_scheduler(&handle);

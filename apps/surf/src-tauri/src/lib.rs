@@ -8,6 +8,7 @@ mod filters;
 mod keychain;
 mod layout;
 mod manager;
+mod nav_filter;
 mod menus;
 mod state;
 mod tabview;
@@ -68,6 +69,8 @@ pub fn run() {
             commands::history_recent,
             commands::settings_get,
             commands::settings_set,
+            commands::rules_get,
+            commands::rules_set,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");

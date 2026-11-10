@@ -390,3 +390,26 @@ pub fn settings_set(app: AppHandle, key: String, value: String) -> Result<(), cr
         .map_err(|e| crate::CommandError::Message(e.to_string()));
     result
 }
+
+#[tauri::command]
+pub fn rules_get(app: AppHandle) -> Result<Vec<String>, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let filters = crate::nav_filter::load_filters(&state::lock(&state.db));
+    Ok(filters)
+}
+
+#[tauri::command]
+pub fn rules_set(app: AppHandle, filters: Vec<String>) -> Result<Vec<String>, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let save = crate::nav_filter::save_filters(&state::lock(&state.db), &filters)
+        .map_err(|e| crate::CommandError::Message(e.to_string()));
+    save?;
+    if !filters.is_empty() {
+        state.nav_filter.start(filters);
+    } else {
+        // Empty list: drop the engine so everything is allowed.
+        state.nav_filter.start(vec!["@@*".into()]);
+    }
+    let saved = crate::nav_filter::load_filters(&state::lock(&state.db));
+    Ok(saved)
+}

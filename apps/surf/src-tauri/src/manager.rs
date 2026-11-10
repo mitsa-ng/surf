@@ -66,6 +66,7 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     let title_handle = app.clone();
     let tab_for_title = id;
     let download_handle = app.clone();
+    let app_handle_nav = app.clone();
     let builder = tauri::webview::WebviewBuilder::new(&label, webview_url)
         .initialization_script(crate::content_bridge::bootstrap_script(&token))
         .on_download(move |_wv, event| {
@@ -95,6 +96,14 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                 }
                 _ => true,
             }
+        })
+        .on_navigation(move |url| {
+            let state = app_handle_nav.state::<BrowserState>();
+            let allowed = state.nav_filter.allows(url);
+            if !allowed {
+                eprintln!("[nav-filter] blocked {url}");
+            }
+            allowed
         })
         .on_page_load(move |_wv, payload| {
             let app = handle.clone();

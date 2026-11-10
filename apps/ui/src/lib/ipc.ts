@@ -72,5 +72,9 @@ export interface HistoryRow {
 
 export const historyRecent = (limit = 100) => invoke<HistoryRow[]>("history_recent", { limit });
 
+export const rulesGet = () => invoke<string[]>("rules_get");
+
+export const rulesSet = (filters: string[]) => invoke<string[]>("rules_set", { filters });
+
 export const onTabsChanged = (handler: (snapshot: TabsSnapshot) => void): Promise<UnlistenFn> =>
   listen<TabsSnapshot>("tabs://changed", (event) => handler(event.payload));

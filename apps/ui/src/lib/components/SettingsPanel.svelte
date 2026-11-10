@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { rulesGet, rulesSet } from "../ipc";
   import ExtensionsPanel from "./ExtensionsPanel.svelte";
 
   const engines = ["duckduckgo", "google", "bing"] as const;
@@ -7,6 +8,8 @@
 
   let engine = $state<Engine>("duckduckgo");
   let loaded = false;
+  let blocklist = $state("");
+  let blocklistNotice = $state("");
 
   $effect(() => {
     if (!loaded) return;
@@ -21,6 +24,19 @@
     .catch(() => {
       loaded = true;
     });
+
+  rulesGet()
+    .then((filters) => (blocklist = filters.join("\n")))
+    .catch(() => {});
+
+  async function saveBlocklist() {
+    const filters = blocklist
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("!"));
+    await rulesSet(filters).catch((e) => console.error(String(e)));
+    blocklistNotice = `已儲存 ${filters.length} 條規則並生效`;
+  }
 </script>
 
 <section class="panel" aria-label="設定">
@@ -32,6 +48,12 @@
         <option value={e}>{e}</option>
       {/each}
     </select>
+  </div>
+  <h3>封鎖清單（EasyList 語法，擋頂層導航）</h3>
+  <textarea bind:value={blocklist} rows="6" spellcheck="false" aria-label="封鎖規則"></textarea>
+  <div class="row">
+    <button class="primary" onclick={() => saveBlocklist()}>儲存規則</button>
+    {#if blocklistNotice}<span class="notice">{blocklistNotice}</span>{/if}
   </div>
   <ExtensionsPanel />
 </section>
@@ -50,6 +72,31 @@
   }
   label {
     font-size: 13px;
+  }
+  h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  textarea {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 8px;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: 12px ui-monospace, monospace;
+    user-select: text;
+    box-sizing: border-box;
+  }
+  .primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .notice {
+    color: var(--text-secondary);
+    font-size: 12px;
   }
   select {
     height: 32px;
