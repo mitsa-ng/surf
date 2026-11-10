@@ -116,7 +116,9 @@
   .mobile {
     display: flex;
     flex-direction: column;
+    /* dvh keeps the bottom bar above the home indicator on iOS. */
     height: 100vh;
+    height: 100dvh;
   }
   .content {
     flex: 1;

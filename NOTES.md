@@ -1,39 +1,48 @@
 # Surf — Working Notes
 
-Milestone 1（全骨架＋可執行垂直切片）的狀態真相檔。context 會丟失，這裡才是進度依據。
+Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這裡才是進度依據。
 
 ## 目標
 
-1. 四層架構（UI / Rust core / Web view / Tauri shell）以可編譯的 workspace 骨架落地，模組邊界照架構圖。
-2. 桌面垂直切片：tab strip + address bar + WKWebView，能真的開網頁、切換/關閉 tab。
-3. Android / iOS 完成 scaffold 並可 build。
-4. `npm test` / `npm run lint` 對齊全域 AGENTS.md 的 test commands 慣例。
+1. 四層架構完整落地：extension engine 端到端可用（content scripts、背景 runtime、真實 API、popup、權限流程）。
+2. 桌面完整瀏覽體驗：tabs、導航、書籤、歷史、設定（搜尋引擎＋封鎖清單）、擴充管理、下載事件、deep links、native menus、macOS keychain。
+3. 行動端：tab model 端到端（Android/iOS），build 產出 APK/Surf.app。
+4. `npm test` / `npm run lint` 全綠。
 
-## 驗收條件
+## 驗收條件（M2 完成時全勾）
 
-- [x] `cargo test --workspace` 全綠（surf-core 15＋surf-ext-host 25）
-- [x] `cargo clippy --workspace --all-targets -- -D warnings` 無錯
-- [x] UI vitest 全綠（8）；svelte-check 0 errors 0 warnings
-- [x] `pnpm dev`（tauri dev）：開窗 → chrome strip 渲染 → Cmd+L 輸入 example.com → IANA 頁面實際載入 → tab 標題 localhost→example.com 更新（截圖＋像素驗證）
-- [x] iOS：`pnpm tauri ios build --target aarch64-sim` 產出 Surf.app
-- [x] Android：`pnpm tauri android build --apk` 產出 app-universal-release-unsigned.apk（NDK 27）
-- [x] surf-ext-host 不依賴 tauri（cargo tree 驗證：0 參照）
-- [x] 架構自檢：ext-host 七模組（manifest/permission/runtime/api/router/planner/rules）＝架構圖七子系統；TabView＋RequestFilter trait、commands 全部就位（本工具無 subagent，逐層最小讀取核對）
+- [x] Extension engine 端到端（tauri dev 實測）：manifest→registry→背景 QuickJS 執行緒→callApi→storage（log 顯示 `bg ready, hits = 1`）；content-script 注入（example.com 頁面藍色 banner 截圖）；ext:// scheme＋popup 視窗＋ext_api_call（popup 顯示 `storage hits：1` 截圖）
+- [x] 桌面導航（Cmd+L → example.com 載入，截圖＋像素驗證）
+- [x] 導航 adblock：NavFilter 專用執行緒（channel verdict），單元測試 block `||example.com^`／fail-open；設定面板可編輯規則
+- [x] 行動端 Android：Pixel_6 模擬器實測 tab model（badge 0→1、sheet 顯示 tab row＋關閉鈕，截圖）
+- [x] 行動端 iOS：iPhone 16 Pro 模擬器啟動＋BottomBar 完整渲染（dvh 修復，截圖）
+- [x] `cargo test --workspace` 全綠（surf-core 16＋surf-ext-host 26＋surf-app 5）
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` 無錯；UI vitest 8＋svelte-check 0/0
+- [x] keychain roundtrip（真 macOS keychain）實測通
+- [x] surf-ext-host 不依賴 tauri（cargo tree 0 參照）
 
 ## 進度
 
 | 日期 | 事項 |
 |---|---|
-| 2026-11-10 | Bootstrap：repo init、DESIGN.md（方向定案）、AGENTS.md、workspace 骨架 |
-| 2026-11-10 | surf-core＋surf-ext-host 全綠 commit；tauri app multiwebview manager；Svelte 5 UI |
-| 2026-11-10 | 實機驗證修三案：window 重複建立 panic、macOS titlebar offset、chrome focus |
-| 2026-11-11 | iOS Surf.app＋Android APK 皆產出；M1 驗收清單完成 |
+| 2026-11-10 | M1：骨架＋桌面垂直切片＋mobile build 產出 |
+| 2026-11-11 | M2：extension engine 端到端驗證（banner/hits=1/popup）；ACL 關鍵修復（見下）；mobile tab model 雙平台驗證 |
+| 2026-11-11 | 修復：rquickjs promise pump、api bridge 位置、grant race、deep-link config 格式、viewport-fit=cover、iOS dvh |
 
-## 已知風險 / 待辦
+## 關鍵教訓（踩雷紀錄）
 
-- **rquickjs-sys 無 mobile bindings**：以 `.cargo/config.toml` 的 `[env] BINDGEN_EXTRA_CLANG_ARGS_<target>` 提供真 triple＋sysroot。SDK/NDK 路徑是機器相關的（Xcode 27.2 / NDK 27.0.12077973），換機器或升級 toolchain 要改。
-- Xcode script phase 不繼承 shell env → bindgen 參數只能放 cargo config，不能靠環境變數。
-- WKContentRuleList 只能 block；redirect/header rules 在 Apple 平台降級（`FilterCapabilities` 已表達）。
-- 行動端 tab 為 instance-swap 模式（M2）；M1 行動端 commands 一律回 M2 提示。
-- `frontendDist` 是 `../../ui/dist`（相對 src-tauri）。
-- 導航用 `location.replace` 模擬 load；`TabView::add_init_script` 佔位（M2 injection planner 前置）。
+- **Tauri ACL：app 有 permissions manifest 後，所有自訂 commands 都要明確 allow**。加入 content-bridge.toml 後 tab_open 等被靜默拒絕（遠端被拒會回錯誤，local 則直接不執行）；修復＝permissions/app-commands.toml 列全表＋capability 引用。
+- rquickjs 的 promise 需手動 pump：`Runtime::execute_pending_job()`，否則 async 擴充程式碼永遠停在第一個 await。
+- Xcode script phase 不繼承 shell env → bindgen 參數放 `.cargo/config.toml` `[env]`。
+- Android WebView 的 `env(safe-area-inset-bottom)` 恆為 0（即使 viewport-fit=cover）→ 需要 CSS 常數 fallback，否則按鈕被手勢列蓋住。
+- Android WebView 109 + swiftshader 有 tile memory 警告；截圖前先 HOME→重開強制重繪。
+- `.cargo/config.toml` 的 SDK/NDK 路徑是機器相關（Xcode 27.2 / NDK 27.0.12077973），換機要改。
+
+## 已知限制（誠實標明）
+
+- 行動端 tab＝model 層：分頁清單/狀態/標題完整，但內容 webview 的 per-tab instance（隔離＋back stack）是 M3 原生工作。
+- `cs_send` 的 token 在頁面 context 可讀——頁面可為「自己的 tab」偽造訊息；真正 isolated world 需平台 API。
+- iOS/Android 的 request-filter adapter 仍是 NotImplemented stub（`FilterCapabilities` 已表達差異）；macOS 導航層 block 已可用。
+- WKContentRuleList 整合（subresource blocking）＝M3。
+- Android APK 未簽名（release engineering）。
+- sync/crypto：trait＋keychain 就緒，傳輸與合併邏輯未做。
