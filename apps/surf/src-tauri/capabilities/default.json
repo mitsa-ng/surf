@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "chrome-only",
+  "description": "Only the chrome webview may invoke commands; content webviews stay isolated from the IPC surface.",
+  "windows": [],
+  "webviews": ["main"],
+  "permissions": ["core:default"]
+}

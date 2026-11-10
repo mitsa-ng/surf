@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/surf-core",
+    "crates/surf-ext-host",
+    "apps/surf/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+url = { version = "2", features = ["serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+surf-core = { path = "crates/surf-core" }
+surf-ext-host = { path = "crates/surf-ext-host" }
+
+[profile.release]
+lto = true
+strip = true

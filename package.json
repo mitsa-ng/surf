@@ -1,0 +1,10 @@
+{
+  "name": "surf",
+  "private": true,
+  "scripts": {
+    "test": "cargo test --workspace && pnpm --filter @surf/ui test",
+    "lint": "cargo clippy --workspace --all-targets -- -D warnings && pnpm --filter @surf/ui lint",
+    "dev": "pnpm --filter surf-app tauri dev",
+    "build": "pnpm --filter surf-app tauri build"
+  }
+}
