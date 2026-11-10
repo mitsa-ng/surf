@@ -65,9 +65,11 @@ impl MemoryGrantStore {
     }
 }
 
+type PromptFn = Box<dyn Fn(&ExtensionId, &PermissionRequest) -> PromptDecision + Send + Sync>;
+
 pub struct PermissionManager {
     store: MemoryGrantStore,
-    prompt: Box<dyn Fn(&ExtensionId, &PermissionRequest) -> PromptDecision + Send + Sync>,
+    prompt: PromptFn,
 }
 
 impl PermissionManager {

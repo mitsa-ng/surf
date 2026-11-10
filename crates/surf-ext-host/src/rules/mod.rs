@@ -121,7 +121,7 @@ impl DeclarativeEngine {
 
     pub fn add(&mut self, rule: DeclarativeRule) {
         self.rules.push(rule);
-        self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
     }
 
     fn effective_action(&self, rule: &DeclarativeRule) -> Option<RequestAction> {

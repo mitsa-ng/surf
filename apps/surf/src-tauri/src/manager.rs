@@ -10,17 +10,20 @@ const TABS_EVENT: &str = "tabs://changed";
 
 pub fn emit_tabs(app: &AppHandle) {
     let state = app.state::<BrowserState>();
-    let model = state::lock(&state.model);
-    let snapshot = state::TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id() };
-    drop(model);
+    let snapshot = {
+        let model = state::lock(&state.model);
+        state::TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id() }
+    };
     let _ = app.emit_to("chrome", TABS_EVENT, &snapshot);
 }
 
 /// Create a tab with a fresh id and its content webview.
 pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabId {
-    let state = app.state::<BrowserState>();
-    let id = state::lock(&state.model).open(url.clone());
-    drop(state);
+    let id = {
+        let state = app.state::<BrowserState>();
+        let id = state::lock(&state.model).open(url.clone());
+        id
+    };
     attach_webview(app, window, id, url);
     persist_session(app);
     emit_tabs(app);
@@ -67,14 +70,12 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                     }
                 }
             }
-            drop(state);
             emit_tabs(&app);
         })
         .on_document_title_changed(move |_wv, title| {
             let app = title_handle.clone();
             let state = app.state::<BrowserState>();
             state::lock(&state.model).set_title(tab_for_title, title);
-            drop(state);
             emit_tabs(&app);
         });
 
@@ -105,7 +106,6 @@ pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> 
         }
     }
     let _ = state::lock(&state.db).delete_tab(id);
-    drop(state);
     persist_session(app);
     emit_tabs(app);
     Ok(())
@@ -122,7 +122,6 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
             let _ = if tab_id == id { view.show() } else { view.hide() };
         }
     }
-    drop(state);
     emit_tabs(app);
     Ok(())
 }
@@ -144,7 +143,6 @@ pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::Co
     if let Some(view) = state::content_webview(app, id) {
         let _ = view.load(&target);
     }
-    drop(state);
     emit_tabs(app);
     Ok(())
 }

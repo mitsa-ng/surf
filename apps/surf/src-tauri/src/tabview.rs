@@ -40,7 +40,7 @@ impl TauriTabView {
 impl TabView for TauriTabView {
     fn load(&self, url: &Url) -> Result<(), TabViewError> {
         self.0
-            .eval(&format!("location.replace({:?})", url.as_str()))
+            .eval(format!("location.replace({:?})", url.as_str()))
             .map_err(|e| TabViewError::Unavailable(e.to_string()))
     }
 
