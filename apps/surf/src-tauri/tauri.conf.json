@@ -24,16 +24,14 @@
   },
   "plugins": {
     "deep-link": {
-      "desktop": {
-        "schemes": [
-          "surf"
-        ]
-      },
-      "mobile": {
-        "schemes": [
-          "surf"
-        ]
-      }
+      "desktop": [
+        {
+          "schemes": [
+            "surf"
+          ]
+        }
+      ],
+      "mobile": []
     }
   }
 }

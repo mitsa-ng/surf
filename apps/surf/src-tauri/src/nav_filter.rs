@@ -65,6 +65,28 @@ fn run_engine(rx: Receiver<Query>, filters: Vec<String>) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_verdict_blocks_and_allows() {
+        let f = NavFilter::default();
+        f.start(vec!["||example.com^".into()]);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let blocked = Url::parse("https://example.com/page").unwrap();
+        let ok = Url::parse("https://other.example/page").unwrap();
+        assert!(!f.allows(&blocked));
+        assert!(f.allows(&ok));
+    }
+
+    #[test]
+    fn no_engine_fails_open() {
+        let f = NavFilter::default();
+        assert!(f.allows(&Url::parse("https://anything.example/").unwrap()));
+    }
+}
+
 /// Load the persisted filter list (one EasyList-syntax rule per line).
 pub fn load_filters(db: &surf_core::storage::Db) -> Vec<String> {
     db.ext_kv_get("sys", "nav_filters")
