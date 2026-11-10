@@ -1,0 +1,29 @@
+# App command surface. Once the app ships an ACL manifest, every custom
+# command needs an explicit allow — the chrome UI gets the full set.
+[[permission]]
+identifier = "allow-surf-commands"
+description = "All browser chrome commands (tabs, bookmarks, history, settings, extensions, rules)"
+commands.allow = [
+    "get_tabs",
+    "tab_open",
+    "tab_close",
+    "tab_activate",
+    "tab_navigate",
+    "tab_back",
+    "tab_forward",
+    "tab_reload",
+    "filter_capabilities",
+    "extensions_list",
+    "extension_install",
+    "extension_uninstall",
+    "extension_grant",
+    "ext_popup_open",
+    "bookmarks_list",
+    "bookmarks_add",
+    "bookmarks_remove",
+    "history_recent",
+    "settings_get",
+    "settings_set",
+    "rules_get",
+    "rules_set",
+]

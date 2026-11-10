@@ -57,7 +57,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px max(8px, env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom))
+    padding: 8px max(8px, env(safe-area-inset-left)) calc(28px + env(safe-area-inset-bottom))
       max(8px, env(safe-area-inset-right));
     border-top: 1px solid var(--hairline);
     background: var(--panel);

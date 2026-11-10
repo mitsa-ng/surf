@@ -49,7 +49,7 @@
     bottom: 0;
     max-height: 70vh;
     overflow-y: auto;
-    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    padding: 8px 8px calc(28px + env(safe-area-inset-bottom));
     border-radius: 12px 12px 0 0;
     background: var(--panel);
   }
