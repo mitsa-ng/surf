@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,15 +15,15 @@ pub trait SecretStore {
     fn delete(&self, name: &str) -> Result<(), SecretError>;
 }
 
-/// M1 in-memory store; swapped for the OS keychain in the Tauri shell
-/// later. Not Send-refcounted — wrap in a Mutex when shared.
+/// In-memory store; swapped for the OS keychain in the Tauri shell on
+/// platforms that have one. Send + Sync via internal Mutex.
 pub struct MemorySecretStore {
-    entries: RefCell<HashMap<String, String>>,
+    entries: Mutex<HashMap<String, String>>,
 }
 
 impl MemorySecretStore {
     pub fn new() -> Self {
-        Self { entries: RefCell::new(HashMap::new()) }
+        Self { entries: Mutex::new(HashMap::new()) }
     }
 }
 
@@ -35,18 +35,19 @@ impl Default for MemorySecretStore {
 
 impl SecretStore for MemorySecretStore {
     fn put(&self, name: &str, value: &str) -> Result<(), SecretError> {
-        self.entries.borrow_mut().insert(name.to_owned(), value.to_owned());
+        self.entries.lock().unwrap().insert(name.to_owned(), value.to_owned());
         Ok(())
     }
     fn get(&self, name: &str) -> Result<String, SecretError> {
         self.entries
-            .borrow()
+            .lock()
+            .unwrap()
             .get(name)
             .cloned()
             .ok_or_else(|| SecretError::NotFound(name.to_owned()))
     }
     fn delete(&self, name: &str) -> Result<(), SecretError> {
-        self.entries.borrow_mut().remove(name);
+        self.entries.lock().unwrap().remove(name);
         Ok(())
     }
 }

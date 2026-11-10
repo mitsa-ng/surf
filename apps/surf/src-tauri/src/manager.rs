@@ -262,3 +262,59 @@ pub fn persist_session(app: &AppHandle) {
         eprintln!("session persist failed: {e}");
     }
 }
+
+// Mobile tab management at the model level. Tab state, titles, and
+// navigation targets are fully tracked; per-tab webview instances
+// (isolation, back stacks) land with the M3 native adapters.
+
+#[cfg(mobile)]
+pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
+    let state = app.state::<BrowserState>();
+    let id = state::lock(&state.model).open(url.clone());
+    if let Some(u) = url {
+        state::lock(&state.model).set_url(id, u);
+    }
+    persist_session(app);
+    emit_tabs(app);
+    id
+}
+
+#[cfg(mobile)]
+pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    state::lock(&state.model)
+        .close(id)
+        .ok_or(crate::CommandError::UnknownTab(id.0))?;
+    persist_session(app);
+    emit_tabs(app);
+    Ok(())
+}
+
+#[cfg(mobile)]
+pub fn activate_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    if !state::lock(&state.model).activate(id) {
+        return Err(crate::CommandError::UnknownTab(id.0));
+    }
+    emit_tabs(app);
+    Ok(())
+}
+
+#[cfg(mobile)]
+pub fn navigate_mobile(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::CommandError> {
+    let target = match urlbox::resolve(input) {
+        OmniboxResult::Navigate(url) => url,
+        OmniboxResult::Search(q) => search_url(app, &q),
+    };
+    let state = app.state::<BrowserState>();
+    {
+        let mut model = state::lock(&state.model);
+        if model.get(id).is_none() {
+            return Err(crate::CommandError::UnknownTab(id.0));
+        }
+        model.set_url(id, target.clone());
+        model.set_loading(id, true);
+    }
+    emit_tabs(app);
+    Ok(())
+}

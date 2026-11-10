@@ -17,103 +17,105 @@ fn snapshot(app: &AppHandle) -> TabsSnapshot {
 
 #[tauri::command]
 pub fn tab_open(app: AppHandle, url: Option<String>) -> Result<TabsSnapshot, crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = (&app, &url);
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
+    let parsed = url
+        .map(|u| url::Url::parse(&u).map_err(|e| crate::CommandError::Message(e.to_string())))
+        .transpose()?;
     #[cfg(desktop)]
     {
-        let parsed = url
-            .map(|u| url::Url::parse(&u).map_err(|e| crate::CommandError::Message(e.to_string())))
-            .transpose()?;
         let window = app
             .get_window(state::MAIN_LABEL)
             .ok_or_else(|| crate::CommandError::Message("main window missing".into()))?;
         crate::manager::open_tab(&app, &window, parsed);
-        Ok(snapshot(&app))
     }
+    #[cfg(mobile)]
+    {
+        crate::manager::open_tab_mobile(&app, parsed);
+    }
+    Ok(snapshot(&app))
 }
 
 #[tauri::command]
 pub fn tab_close(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = &app;
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
     #[cfg(desktop)]
     {
         crate::manager::close_tab(&app, TabId(id))?;
-        Ok(snapshot(&app))
     }
+    #[cfg(mobile)]
+    {
+        crate::manager::close_tab_mobile(&app, TabId(id)).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    }
+    Ok(snapshot(&app))
 }
 
 #[tauri::command]
 pub fn tab_activate(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = &app;
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
     #[cfg(desktop)]
     {
         crate::manager::activate_tab(&app, TabId(id))?;
-        Ok(snapshot(&app))
     }
+    #[cfg(mobile)]
+    {
+        crate::manager::activate_tab_mobile(&app, TabId(id)).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    }
+    Ok(snapshot(&app))
 }
 
 #[tauri::command]
 pub fn tab_navigate(app: AppHandle, id: u64, input: String) -> Result<TabsSnapshot, crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = (&app, &input);
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
     #[cfg(desktop)]
     {
         crate::manager::navigate(&app, TabId(id), &input)?;
-        Ok(snapshot(&app))
     }
+    #[cfg(mobile)]
+    {
+        crate::manager::navigate_mobile(&app, TabId(id), &input).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    }
+    Ok(snapshot(&app))
 }
 
 #[tauri::command]
 pub fn tab_back(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = &app;
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
     #[cfg(desktop)]
     {
-        crate::manager::eval_history(&app, TabId(id), "history.back()")
+        crate::manager::eval_history(&app, TabId(id), "history.back()")?;
     }
+    #[cfg(mobile)]
+    {
+        // Per-tab webview history arrives with instance-swap (M3); the
+        // model-level reload hints the UI instead.
+        let _ = (&app, &id);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn tab_forward(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = &app;
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
     #[cfg(desktop)]
     {
-        crate::manager::eval_history(&app, TabId(id), "history.forward()")
+        crate::manager::eval_history(&app, TabId(id), "history.forward()")?;
     }
+    #[cfg(mobile)]
+    {
+        // Per-tab webview history arrives with instance-swap (M3); the
+        // model-level reload hints the UI instead.
+        let _ = (&app, &id);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn tab_reload(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(mobile)]
-    {
-        let _ = &app;
-        return Err(crate::CommandError::Message("行動端內容分頁在 M2 啟用".into()));
-    }
     #[cfg(desktop)]
     {
-        crate::manager::eval_history(&app, TabId(id), "location.reload()")
+        crate::manager::eval_history(&app, TabId(id), "location.reload()")?;
     }
+    #[cfg(mobile)]
+    {
+        // Per-tab webview history arrives with instance-swap (M3); the
+        // model-level reload hints the UI instead.
+        let _ = (&app, &id);
+    }
+    Ok(())
 }
 
 #[tauri::command]

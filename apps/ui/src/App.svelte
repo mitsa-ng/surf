@@ -12,6 +12,7 @@
 
   const isMobile = isMobileDevice();
   let toolbar: Toolbar | undefined = $state();
+  const activeUrl = $derived(tabs.list.find((t) => t.id === tabs.activeId)?.url ?? null);
 
   onMount(() => {
     void init();
@@ -85,11 +86,12 @@
     {#if tabs.sheetOpen}
       <TabSheet />
     {/if}
-    <div class="content" aria-hidden="true">
+    <div class="content">
       {#if tabs.list.length === 0}
         <p>沒有分頁。點下方分頁按鈕新增。</p>
       {:else}
-        <p>行動端內容分頁在 M2 啟用，先以桌面版瀏覽。</p>
+        <p class="mobile-note">分頁清單已啟用；每個分頁的內容 webview 在 M3 接上。</p>
+        <p class="mobile-url">{activeUrl ?? "（空白分頁）"}</p>
       {/if}
     </div>
     <BottomBar />
@@ -124,9 +126,15 @@
     background: var(--bg);
   }
   .content p {
-    margin: 0;
+    margin: 4px 0;
     color: var(--text-secondary);
     font-size: 14px;
     text-align: center;
+    overflow-wrap: anywhere;
+    max-width: 90vw;
+  }
+  .mobile-url {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
   }
 </style>

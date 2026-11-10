@@ -54,7 +54,10 @@ impl BrowserState {
             permission: Arc::new(Mutex::new(PermissionManager::new())),
             alarms: Arc::new(Mutex::new(HashMap::new())),
             bg_threads: Mutex::new(BgRegistry::default()),
+            #[cfg(target_os = "macos")]
             secrets: std::sync::Arc::new(crate::keychain::KeychainStore::new("com.surf.browser")),
+            #[cfg(not(target_os = "macos"))]
+            secrets: std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new()),
             nav_filter: crate::nav_filter::NavFilter::default(),
         }
     }
@@ -89,7 +92,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         )?;
         drop(chrome);
 
-        restore_session(&handle, &window);
+        restore_session(&handle);
         watch_resize(&handle, &window);
         if let Err(e) = crate::menus::build(&handle) {
             eprintln!("menu build failed: {e}");
@@ -99,9 +102,11 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(mobile)]
     {
-        tauri::WebviewWindowBuilder::new(app, MAIN_LABEL, tauri::WebviewUrl::App("index.html".into()))
+        let win = tauri::WebviewWindowBuilder::new(app, MAIN_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("Surf")
             .build()?;
+                restore_session(&handle);
+        drop(win);
     }
 
     crate::deep_links::wire(&handle);
@@ -295,17 +300,30 @@ fn start_alarm_scheduler(app: &AppHandle) {
 
 /// Reopen the persisted session. Fresh tab ids are fine: nothing outside
 /// this process references them.
-fn restore_session(app: &AppHandle, window: &Window<Wry>) {
+fn restore_session(app: &AppHandle) {
     let state = app.state::<BrowserState>();
     let saved = { lock(&state.db).load_tabs().unwrap_or_default() };
-    if saved.is_empty() {
-        crate::manager::open_tab(app, window, None);
-        return;
+    #[cfg(desktop)]
+    {
+        let window = app.get_window(MAIN_LABEL).expect("main window exists");
+        if saved.is_empty() {
+            crate::manager::open_tab(app, &window, None);
+            return;
+        }
+        for tab in saved {
+            let id = crate::manager::open_tab(app, &window, tab.url.clone());
+            if let Some(title) = tab.title {
+                lock(&state.model).set_title(id, title);
+            }
+        }
     }
-    for tab in saved {
-        let id = crate::manager::open_tab(app, window, tab.url.clone());
-        if let Some(title) = tab.title {
-            lock(&state.model).set_title(id, title);
+    #[cfg(mobile)]
+    {
+        for tab in saved {
+            crate::manager::open_tab_mobile(app, tab.url.clone());
+            if let Some(title) = tab.title {
+                lock(&state.model).set_title(tab.id, title);
+            }
         }
     }
     // open_tab leaves the last one active, matching persisted order.
