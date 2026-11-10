@@ -3,7 +3,7 @@ use url::Url;
 /// What a platform's request-filter adapter can actually enforce. Rules
 /// the platform cannot run are dropped at plan time instead of failing
 /// navigation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FilterCapabilities {
     pub block: bool,
     pub redirect: bool,

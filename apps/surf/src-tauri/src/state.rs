@@ -4,10 +4,11 @@ use std::sync::Mutex;
 use surf_core::storage::Db;
 use surf_core::tabs::{TabId, TabModel, TabState};
 use surf_ext_host::Registry;
-use tauri::{AppHandle, Webview, WebviewWindowBuilder, Window, WindowBuilder, Wry};
+use tauri::{AppHandle, Manager, Window, WindowBuilder, Wry};
 use url::Url;
 
 use crate::layout;
+use crate::tabview::TauriTabView;
 
 #[derive(serde::Serialize, Clone)]
 pub struct TabsSnapshot {
@@ -19,13 +20,8 @@ pub struct BrowserState {
     pub model: Mutex<TabModel>,
     pub db: Mutex<Db>,
     pub registry: Mutex<Registry>,
-    pub webviews: Mutex<HashMap<TabId, TauriTabViewHandle>>,
+    pub webviews: Mutex<HashMap<TabId, TauriTabView>>,
 }
-
-/// Cloneable handle to a content webview. Tauri webviews are cheap
-/// channel handles, safe to clone and hold.
-#[derive(Clone)]
-pub struct TauriTabViewHandle(pub Webview<Wry>);
 
 impl BrowserState {
     pub fn new(db: Db) -> Self {
@@ -57,7 +53,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .build()?;
 
         let size = window.inner_size()?;
-        let scale = window.scale_factor();
+        let scale = window.scale_factor().unwrap_or(1.0);
         window.add_child(
             tauri::webview::WebviewBuilder::new("chrome", tauri::WebviewUrl::App("index.html".into())),
             tauri::LogicalPosition::new(0.0, 0.0),
@@ -70,7 +66,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(mobile)]
     {
-        WebviewWindowBuilder::new(app, MAIN_LABEL, tauri::WebviewUrl::App("index.html".into()))
+        tauri::WebviewWindowBuilder::new(app, MAIN_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("Surf")
             .build()?;
     }
@@ -106,9 +102,17 @@ fn watch_resize(app: &AppHandle, window: &Window<Wry>) {
     });
 }
 
-pub fn content_webview(app: &AppHandle, id: TabId) -> Option<Webview<Wry>> {
+/// Cheap clone of a tab's webview handle, wrapped as a TabView.
+pub fn content_webview(app: &AppHandle, id: TabId) -> Option<TauriTabView> {
     let state = app.state::<BrowserState>();
-    lock(&state.webviews).get(&id).map(|h| h.0.clone())
+    let view = lock(&state.webviews).get(&id).map(|v| TauriTabView(v.raw().clone()));
+    view
+}
+
+pub fn take_content_webview(app: &AppHandle, id: TabId) -> Option<TauriTabView> {
+    let state = app.state::<BrowserState>();
+    let view = lock(&state.webviews).remove(&id);
+    view
 }
 
 pub fn home_url() -> Url {

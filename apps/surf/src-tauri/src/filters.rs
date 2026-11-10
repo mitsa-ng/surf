@@ -1,13 +1,16 @@
 use surf_ext_host::rules::FilterCapabilities;
 
 /// Layer-3 request-filter boundary. Adapters translate engine decisions
-/// into their platform's interception mechanism.
+/// into their platform's interception mechanism. `install` wiring lands
+/// with the M2 content-script bridge, hence the allow.
 pub trait RequestFilterAdapter: Send + Sync {
     fn capabilities(&self) -> FilterCapabilities;
+    #[allow(dead_code)]
     fn install(&self, rules: &[String]) -> Result<(), FilterInstallError>;
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum FilterInstallError {
     #[error("adapter is not implemented for this platform in M1: {0}")]
     NotImplemented(&'static str),

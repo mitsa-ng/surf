@@ -1,0 +1,1 @@
+{"chrome-only":{"identifier":"chrome-only","description":"Only the chrome webview may invoke commands; content webviews stay isolated from the IPC surface.","local":true,"webviews":["main"],"permissions":["core:default"]}}

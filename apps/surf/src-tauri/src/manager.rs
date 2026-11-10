@@ -1,9 +1,10 @@
 use surf_core::tabs::TabId;
 use surf_core::urlbox::{self, OmniboxResult};
-use tauri::{AppHandle, Emitter, Window, Wry};
+use tauri::{AppHandle, Emitter, Manager, Window, Wry};
 use url::Url;
 
-use crate::state::{self, BrowserState, TauriTabViewHandle};
+use crate::state::{self, BrowserState};
+use crate::tabview::TabView;
 
 const TABS_EVENT: &str = "tabs://changed";
 
@@ -42,7 +43,7 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     let builder = tauri::webview::WebviewBuilder::new(&label, webview_url)
         .on_page_load(move |_wv, payload| {
             let app = handle.clone();
-            let url = Url::parse(&payload.url()).ok();
+            let url = Some(payload.url().clone());
             let started = payload.event() == tauri::webview::PageLoadEvent::Started;
             let state = app.state::<BrowserState>();
             {
@@ -80,10 +81,11 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     let (pos, size) = crate::layout::content_rect(window);
     match window.add_child(builder, pos, size) {
         Ok(wv) => {
+            let view = crate::tabview::TauriTabView(wv);
             if !is_active {
-                let _ = wv.hide();
+                let _ = view.hide();
             }
-            state::lock(&state.webviews).insert(id, TauriTabViewHandle(wv));
+            state::lock(&state.webviews).insert(id, view);
         }
         Err(e) => {
             eprintln!("failed to create content webview for {id}: {e}");
@@ -94,12 +96,12 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
 pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     let closed = state::lock(&state.model).close(id).ok_or(crate::CommandError::UnknownTab(id.0))?;
-    if let Some(handle) = state::lock(&state.webviews).remove(&id) {
-        let _ = handle.0.close();
+    if let Some(view) = state::take_content_webview(app, id) {
+        let _ = view.close();
     }
     if let Some(new_active) = closed.new_active {
-        if let Some(wv) = state::content_webview(app, new_active) {
-            let _ = wv.show();
+        if let Some(view) = state::content_webview(app, new_active) {
+            let _ = view.show();
         }
     }
     let _ = state::lock(&state.db).delete_tab(id);
@@ -116,12 +118,8 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
     }
     let ids: Vec<TabId> = state::lock(&state.webviews).keys().copied().collect();
     for tab_id in ids {
-        if let Some(wv) = state::content_webview(app, tab_id) {
-            if tab_id == id {
-                let _ = wv.show();
-            } else {
-                let _ = wv.hide();
-            }
+        if let Some(view) = state::content_webview(app, tab_id) {
+            let _ = if tab_id == id { view.show() } else { view.hide() };
         }
     }
     drop(state);
@@ -143,8 +141,8 @@ pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::Co
         model.set_url(id, target.clone());
         model.set_loading(id, true);
     }
-    if let Some(wv) = state::content_webview(app, id) {
-        let _ = wv.eval(&format!("location.replace({:?})", target.as_str()));
+    if let Some(view) = state::content_webview(app, id) {
+        let _ = view.load(&target);
     }
     drop(state);
     emit_tabs(app);
@@ -156,8 +154,8 @@ pub fn eval_history(app: &AppHandle, id: TabId, js: &str) -> Result<(), crate::C
     if state::lock(&state.model).get(id).is_none() {
         return Err(crate::CommandError::UnknownTab(id.0));
     }
-    if let Some(wv) = state::content_webview(app, id) {
-        let _ = wv.eval(js);
+    if let Some(view) = state::content_webview(app, id) {
+        let _ = view.eval(js);
     }
     Ok(())
 }
@@ -170,7 +168,7 @@ pub fn persist_session(app: &AppHandle) {
     let state = app.state::<BrowserState>();
     let model = state::lock(&state.model);
     let db_result = (|| -> Result<(), surf_core::storage::StorageError> {
-        let mut db = state::lock(&state.db);
+        let db = state::lock(&state.db);
         db.clear_tabs()?;
         for (position, tab) in model.list().iter().enumerate() {
             db.save_tab(position, tab)?;

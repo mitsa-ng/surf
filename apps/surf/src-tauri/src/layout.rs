@@ -1,5 +1,5 @@
 use surf_core::tabs::TabId;
-use tauri::{AppHandle, Window, Wry};
+use tauri::{AppHandle, Manager, Window, Wry};
 
 use crate::state::{self, BrowserState};
 
@@ -15,7 +15,7 @@ pub fn relayout(app: &AppHandle) -> Result<(), tauri::Error> {
         return Ok(());
     };
     let size = window.inner_size()?;
-    let scale = window.scale_factor();
+    let scale = window.scale_factor().unwrap_or(1.0);
     let width = size.width as f64 / scale;
     let height = size.height as f64 / scale;
 
@@ -28,9 +28,9 @@ pub fn relayout(app: &AppHandle) -> Result<(), tauri::Error> {
     let ids: Vec<TabId> = state::lock(&state.webviews).keys().copied().collect();
     let content_height = (height - CHROME_HEIGHT).max(0.0);
     for id in ids {
-        if let Some(wv) = state::content_webview(app, id) {
-            wv.set_position(tauri::LogicalPosition::new(0.0, CHROME_HEIGHT))?;
-            wv.set_size(tauri::LogicalSize::new(width, content_height))?;
+        if let Some(view) = state::content_webview(app, id) {
+            view.raw().set_position(tauri::LogicalPosition::new(0.0, CHROME_HEIGHT))?;
+            view.raw().set_size(tauri::LogicalSize::new(width, content_height))?;
         }
     }
     Ok(())
@@ -39,7 +39,8 @@ pub fn relayout(app: &AppHandle) -> Result<(), tauri::Error> {
 /// Geometry for a freshly created content webview, so it lands correctly
 /// before the first resize event.
 pub fn content_rect(window: &Window<Wry>) -> (tauri::LogicalPosition<f64>, tauri::LogicalSize<f64>) {
-    let size = window.inner_size().map(|s| s.to_logical::<f64>(window.scale_factor())).unwrap_or_default();
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let size = window.inner_size().map(|s| s.to_logical::<f64>(scale)).unwrap_or_default();
     let height = (size.height - CHROME_HEIGHT).max(0.0);
     (tauri::LogicalPosition::new(0.0, CHROME_HEIGHT), tauri::LogicalSize::new(size.width, height))
 }

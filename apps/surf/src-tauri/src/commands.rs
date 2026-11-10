@@ -1,5 +1,5 @@
 use surf_core::tabs::TabId;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::state::{self, BrowserState, TabsSnapshot};
 
@@ -118,4 +118,41 @@ pub fn tab_reload(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
 #[tauri::command]
 pub fn filter_capabilities() -> surf_ext_host::rules::FilterCapabilities {
     crate::filters::platform_adapter().capabilities()
+}
+
+#[derive(serde::Serialize)]
+pub struct ExtensionSummary {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+}
+
+#[tauri::command]
+pub fn extensions_list(app: AppHandle) -> Vec<ExtensionSummary> {
+    let state = app.state::<BrowserState>();
+    let registry = state::lock(&state.registry);
+    registry
+        .list()
+        .into_iter()
+        .map(|ext| ExtensionSummary {
+            id: ext.id.0.clone(),
+            name: ext.manifest.name.clone(),
+            version: ext.manifest.version.clone(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn extension_install(app: AppHandle, path: String) -> Result<ExtensionSummary, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let mut registry = state::lock(&state.registry);
+    let id = registry
+        .install_dir(&path)
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    let ext = registry.get(&id).expect("just installed");
+    Ok(ExtensionSummary {
+        id: id.0,
+        name: ext.manifest.name.clone(),
+        version: ext.manifest.version.clone(),
+    })
 }

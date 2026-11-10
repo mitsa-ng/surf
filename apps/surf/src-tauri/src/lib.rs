@@ -45,6 +45,8 @@ pub fn run() {
             commands::tab_forward,
             commands::tab_reload,
             commands::filter_capabilities,
+            commands::extensions_list,
+            commands::extension_install,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");
