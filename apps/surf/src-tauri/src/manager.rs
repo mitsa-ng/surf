@@ -87,6 +87,11 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                 let _ = view.hide();
             }
             state::lock(&state.webviews).insert(id, view);
+            // A fresh tab means the user types next: keyboard focus belongs
+            // to the chrome (address bar), not the page.
+            if let Some(chrome) = app.get_webview(crate::layout::CHROME_LABEL) {
+                let _ = chrome.set_focus();
+            }
         }
         Err(e) => {
             eprintln!("failed to create content webview for {id}: {e}");

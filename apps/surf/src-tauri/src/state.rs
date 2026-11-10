@@ -52,13 +52,16 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .min_inner_size(480.0, 480.0)
             .build()?;
 
-        let size = window.inner_size()?;
         let scale = window.scale_factor().unwrap_or(1.0);
-        window.add_child(
-            tauri::webview::WebviewBuilder::new("chrome", tauri::WebviewUrl::App("index.html".into())),
-            tauri::LogicalPosition::new(0.0, 0.0),
+        let size = window.inner_size()?;
+        let offset = layout::titlebar_offset(&window);
+        let chrome = window.add_child(
+            tauri::webview::WebviewBuilder::new("chrome", tauri::WebviewUrl::App("index.html".into()))
+                .focused(true),
+            tauri::LogicalPosition::new(0.0, offset),
             tauri::LogicalSize::new(size.width as f64 / scale, layout::CHROME_HEIGHT),
         )?;
+        drop(chrome);
 
         restore_session(&handle, &window);
         watch_resize(&handle, &window);

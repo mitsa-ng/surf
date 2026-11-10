@@ -10,17 +10,7 @@
     "frontendDist": "../ui/dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Surf",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 480,
-        "minHeight": 480,
-        "url": "index.html"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
