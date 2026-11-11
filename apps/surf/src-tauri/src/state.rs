@@ -44,6 +44,8 @@ pub struct BrowserState {
     pub secrets: std::sync::Arc<dyn surf_core::crypto::SecretStore + Send + Sync>,
     /// Top-level navigation filter engine (dedicated thread).
     pub nav_filter: crate::nav_filter::NavFilter,
+    /// Download history for the downloads panel (newest first).
+    pub downloads: Mutex<Vec<crate::commands::DownloadRecord>>,
     /// File-based auto sync reconciler state (desktop).
     #[cfg(desktop)]
     pub auto_sync: std::sync::Arc<crate::auto_sync::AutoSync>,
@@ -69,6 +71,7 @@ impl BrowserState {
             #[cfg(not(target_os = "macos"))]
             secrets: std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new()),
             nav_filter: crate::nav_filter::NavFilter::default(),
+            downloads: Mutex::new(Vec::new()),
             #[cfg(desktop)]
             auto_sync: std::sync::Arc::new(crate::auto_sync::AutoSync::default()),
         }

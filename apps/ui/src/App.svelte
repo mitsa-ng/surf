@@ -2,12 +2,14 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
-  import { initUi, toggleBookmarksBar, togglePanel, ui } from "./lib/ui.svelte";
+  import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
   import { panelSetOpen } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import BookmarksBar from "./lib/components/BookmarksBar.svelte";
+  import FindBar from "./lib/components/FindBar.svelte";
+  import TabSearch from "./lib/components/TabSearch.svelte";
   import BottomBar from "./lib/components/BottomBar.svelte";
   import TabSheet from "./lib/components/TabSheet.svelte";
   import Panel from "./lib/components/Panel.svelte";
@@ -87,6 +89,15 @@
     } else if (e.shiftKey && e.key.toLowerCase() === "b") {
       e.preventDefault();
       toggleBookmarksBar();
+    } else if (e.shiftKey && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      toggleTabSearch();
+    } else if (e.shiftKey && e.key.toLowerCase() === "j") {
+      e.preventDefault();
+      togglePanel("downloads");
+    } else if (e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      toggleFind();
     }
   }
 </script>
@@ -118,6 +129,8 @@
     {#if ui.bookmarksBar}
       <BookmarksBar />
     {/if}
+    <FindBar />
+    <TabSearch />
   </header>
   <Panel />
   <!-- Content webviews are native children positioned below this chrome;

@@ -2,6 +2,7 @@ use surf_core::tabs::TabId;
 use tauri::{AppHandle, Manager};
 
 use crate::state::{self, BrowserState, TabsSnapshot};
+use crate::tabview::TabView;
 
 
 #[tauri::command]
@@ -432,6 +433,131 @@ pub fn history_clear(app: AppHandle) -> Result<usize, crate::CommandError> {
     let state = app.state::<BrowserState>();
     let db = state::lock(&state.db);
     db.clear_history().map_err(|e| crate::CommandError::Message(e.to_string()))
+}
+
+/// One finished download, shown in the downloads panel.
+#[derive(serde::Serialize, Clone)]
+pub struct DownloadRecord {
+    pub url: String,
+    pub path: String,
+    pub filename: String,
+    pub success: bool,
+    pub at: i64,
+}
+
+/// Append to the download history (called from the download handlers).
+pub fn record_download(app: &AppHandle, url: &str, path: Option<&std::path::Path>, success: bool) {
+    let record = DownloadRecord {
+        url: url.to_owned(),
+        path: path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+        filename: path
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "download".into()),
+        success,
+        at: surf_core::tabs::now_ms_helper(),
+    };
+    let state = app.state::<BrowserState>();
+    let mut downloads = state::lock(&state.downloads);
+    downloads.insert(0, record);
+    downloads.truncate(100);
+}
+
+#[tauri::command]
+pub fn downloads_list(app: AppHandle) -> Vec<DownloadRecord> {
+    let state = app.state::<BrowserState>();
+    let downloads = state::lock(&state.downloads);
+    downloads.clone()
+}
+
+/// Reveal a downloaded file in Finder/Files. Only paths under the
+/// downloads directory are accepted.
+#[tauri::command]
+pub fn download_reveal(app: AppHandle, path: String) -> Result<(), crate::CommandError> {
+    #[cfg(desktop)]
+    {
+        let record = {
+            let state = app.state::<BrowserState>();
+            let downloads = state::lock(&state.downloads);
+            downloads.iter().find(|d| d.path == path).cloned()
+        };
+        if record.is_none() {
+            return Err(crate::CommandError::Message("unknown download".into()));
+        }
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, path);
+        Err(crate::CommandError::Message("僅支援桌面版".into()))
+    }
+}
+
+/// TreeWalker-based find: window.find is unreliable in WKWebView, so the
+/// matches are walked and selected with a Range directly. Selection is
+/// the visible highlight; the walker skips script/style subtrees.
+const FIND_SCRIPT: &str = r#"(function (q, back) {
+  if (!window.__surfFind) window.__surfFind = { idx: -1, q: null };
+  var s = window.__surfFind;
+  if (s.q !== q) { s.q = q; s.idx = -1; }
+  function textNodes() {
+    var walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        var p = n.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        var t = p.tagName;
+        if (t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEXTAREA") return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var out = [], n;
+    while ((n = walker.nextNode())) out.push(n);
+    return out;
+  }
+  var needle = q.toLowerCase();
+  var matches = [];
+  var nodes = textNodes();
+  for (var i = 0; i < nodes.length; i++) {
+    var text = nodes[i].nodeValue.toLowerCase();
+    var from = 0, at;
+    while ((at = text.indexOf(needle, from)) !== -1) {
+      matches.push({ node: nodes[i], start: at, end: at + q.length });
+      from = at + q.length;
+    }
+  }
+  var sel = window.getSelection();
+  if (!matches.length) { sel.removeAllRanges(); return; }
+  if (back) s.idx = s.idx <= 0 ? matches.length - 1 : s.idx - 1;
+  else s.idx = (s.idx + 1) % matches.length;
+  var m = matches[s.idx];
+  var range = document.createRange();
+  range.setStart(m.node, m.start);
+  range.setEnd(m.node, m.end);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  var el = m.node.parentElement;
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
+})"#;
+
+/// Find-in-page: selects the next (or previous) match in the tab's
+/// content webview, case-insensitive with wraparound.
+#[tauri::command]
+pub fn find_in_page(app: AppHandle, id: u64, query: String, backward: bool) -> Result<(), crate::CommandError> {
+    let query = query.trim().to_owned();
+    if query.is_empty() {
+        return Ok(());
+    }
+    let Some(view) = state::content_webview(&app, surf_core::tabs::TabId(id)) else {
+        return Ok(());
+    };
+    let js = format!("{FIND_SCRIPT}({query:?}, {back});", back = backward);
+    view.eval(&js).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    Ok(())
 }
 
 #[tauri::command]

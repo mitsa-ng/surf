@@ -147,6 +147,12 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                     true
                 }
                 tauri::webview::DownloadEvent::Finished { url, path, success } => {
+                    crate::commands::record_download(
+                        &download_handle,
+                        url.as_str(),
+                        path.as_deref(),
+                        success,
+                    );
                     let _ = download_handle.emit_to(
                         "chrome",
                         "downloads://finished",

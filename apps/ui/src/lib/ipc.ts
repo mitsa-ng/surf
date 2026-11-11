@@ -99,3 +99,12 @@ export const historyClear = () => invoke<number>("history_clear");
 export const bookmarksBarSetOpen = (open: boolean) => invoke<void>("bookmarks_bar_set_open", { open });
 
 export const settingsGet = (key: string) => invoke<string | null>("settings_get", { key });
+
+export type DownloadRow = { url: string; path: string; filename: string; success: boolean; at: number };
+
+export const downloadsList = () => invoke<DownloadRow[]>("downloads_list");
+
+export const downloadReveal = (path: string) => invoke<void>("download_reveal", { path });
+
+export const findInPage = (id: number, query: string, backward: boolean) =>
+  invoke<void>("find_in_page", { id, query, backward });

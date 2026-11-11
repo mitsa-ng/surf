@@ -5,6 +5,7 @@
   import HistoryPanel from "./HistoryPanel.svelte";
   import ExtensionsPanel from "./ExtensionsPanel.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import DownloadsPanel from "./DownloadsPanel.svelte";
 </script>
 
 {#if ui.panel}
@@ -26,6 +27,8 @@
       <ExtensionsPanel />
     {:else if ui.panel === "settings"}
       <SettingsPanel />
+    {:else if ui.panel === "downloads"}
+      <DownloadsPanel />
     {/if}
   </aside>
 {/if}

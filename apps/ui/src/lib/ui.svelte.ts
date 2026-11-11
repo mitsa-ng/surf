@@ -2,26 +2,34 @@ import * as ipc from "./ipc";
 import { tabs } from "./tabs.svelte";
 
 export const ui = $state<{
-  panel: null | "bookmarks" | "history" | "extensions" | "settings";
+  panel: null | "bookmarks" | "history" | "extensions" | "settings" | "downloads";
   extensions: ipc.ExtensionSummary[];
   bookmarks: ipc.BookmarkRow[];
   history: ipc.HistoryRow[];
+  downloads: ipc.DownloadRow[];
   installError: string;
   installNotice: string;
   installPath: string;
   pendingInstall: null | { id: string; name: string; version: string; permissions: string[] };
   /** Desktop bookmarks bar visibility; mirrors the persisted setting. */
   bookmarksBar: boolean;
+  /** Tab-search overlay (Cmd/Ctrl+Shift+A). */
+  tabSearchOpen: boolean;
+  /** Find-in-page bar (Cmd/Ctrl+F). */
+  findOpen: boolean;
 }>({
   panel: null,
   extensions: [],
   bookmarks: [],
   history: [],
+  downloads: [],
   installError: "",
   installNotice: "",
   installPath: "",
   pendingInstall: null,
   bookmarksBar: false,
+  tabSearchOpen: false,
+  findOpen: false,
 });
 
 let started = false;
@@ -36,6 +44,7 @@ export async function initUi() {
   await Promise.all([
     refreshExtensions(),
     refreshBookmarks(),
+    refreshDownloads(),
     // The Rust side already applied the persisted flag at setup; this
     // only mirrors it in the UI so the header renders the right height.
     ipc
@@ -43,6 +52,11 @@ export async function initUi() {
       .then((v) => (ui.bookmarksBar = v !== null && v !== ""))
       .catch(() => {}),
   ]);
+  // Download events arrive from the download handlers; refresh the list.
+  const { listen } = await import("@tauri-apps/api/event");
+  for (const event of ["downloads://started", "downloads://finished"]) {
+    void listen(event, () => void refreshDownloads()).catch(() => {});
+  }
 }
 
 /** Cmd/Ctrl+Shift+B: toggle the desktop bookmarks bar. */
@@ -63,7 +77,11 @@ export async function refreshHistory() {
   ui.history = await ipc.historyRecent(100).catch(() => []);
 }
 
-export function togglePanel(name: "bookmarks" | "history" | "extensions" | "settings") {
+export async function refreshDownloads() {
+  ui.downloads = await ipc.downloadsList().catch(() => []);
+}
+
+export function togglePanel(name: "bookmarks" | "history" | "extensions" | "settings" | "downloads") {
   if (ui.panel === name) {
     ui.panel = null;
     return;
@@ -72,6 +90,18 @@ export function togglePanel(name: "bookmarks" | "history" | "extensions" | "sett
   if (name === "bookmarks") void refreshBookmarks();
   if (name === "history") void refreshHistory();
   if (name === "extensions") void refreshExtensions();
+  if (name === "downloads") void refreshDownloads();
+}
+
+/** Cmd/Ctrl+Shift+A: tab-search overlay. */
+export function toggleTabSearch() {
+  ui.tabSearchOpen = !ui.tabSearchOpen;
+  if (ui.tabSearchOpen) ui.panel = null;
+}
+
+/** Cmd/Ctrl+F: find-in-page bar. */
+export function toggleFind() {
+  ui.findOpen = !ui.findOpen;
 }
 
 export async function proposeInstall() {
