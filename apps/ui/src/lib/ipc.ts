@@ -13,6 +13,7 @@ export interface TabState {
 export interface TabsSnapshot {
   tabs: TabState[];
   active: number | null;
+  split?: [number, number] | null;
 }
 
 export interface FilterCapabilities {
@@ -31,6 +32,11 @@ export const tabSetPinned = (id: number, pinned: boolean) =>
   invoke<TabsSnapshot>("tab_set_pinned", { id, pinned });
 
 export const tabReopenClosed = () => invoke<TabsSnapshot>("tab_reopen_closed");
+
+export const splitSet = (left: number, right: number) =>
+  invoke<void>("split_set", { left, right });
+
+export const splitClear = () => invoke<void>("split_clear");
 
 export const tabClose = (id: number) => invoke<TabsSnapshot>("tab_close", { id });
 

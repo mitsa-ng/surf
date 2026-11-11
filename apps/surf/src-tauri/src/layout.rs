@@ -49,10 +49,30 @@ pub fn relayout_window(window: &Window<Wry>) -> Result<(), tauri::Error> {
     let ids: Vec<TabId> = state::lock(&state.webviews).keys().copied().collect();
     let content_top = chrome_height(&state);
     let content_height = (logical_size.height - content_top).max(0.0);
+    let split = *state::lock(&state.split);
     for id in ids {
-        if let Some(view) = state::content_webview(app, id) {
-            view.raw().set_position(tauri::LogicalPosition::new(0.0, content_top))?;
-            view.raw().set_size(tauri::LogicalSize::new(logical_size.width, content_height))?;
+        let Some(view) = state::content_webview(app, id) else { continue };
+        match split {
+            // Split view: the two members share the content area; every
+            // other webview hides.
+            Some((left, _)) if id == left => {
+                view.raw().set_position(tauri::LogicalPosition::new(0.0, content_top))?;
+                view.raw().set_size(tauri::LogicalSize::new(logical_size.width / 2.0, content_height))?;
+                let _ = view.show();
+            }
+            Some((_, right)) if id == right => {
+                view.raw().set_position(tauri::LogicalPosition::new(logical_size.width / 2.0, content_top))?;
+                let half = logical_size.width - (logical_size.width / 2.0);
+                view.raw().set_size(tauri::LogicalSize::new(half, content_height))?;
+                let _ = view.show();
+            }
+            Some(_) => {
+                let _ = view.hide();
+            }
+            None => {
+                view.raw().set_position(tauri::LogicalPosition::new(0.0, content_top))?;
+                view.raw().set_size(tauri::LogicalSize::new(logical_size.width, content_height))?;
+            }
         }
     }
     if panel_open {
@@ -100,6 +120,49 @@ pub fn bookmarks_bar_set_open(app: AppHandle, open: bool) -> Result<(), String> 
     {
         Ok(())
     }
+}
+
+/// Enter split view: show two tabs side by side under the chrome.
+/// Desktop only; both tabs must exist and differ.
+#[tauri::command]
+pub fn split_set(app: AppHandle, left: u64, right: u64) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let (left, right) = (TabId(left), TabId(right));
+        if left == right {
+            return Err("split needs two different tabs".into());
+        }
+        let state = app.state::<BrowserState>();
+        {
+            let model = state::lock(&state.model);
+            if model.get(left).is_none() || model.get(right).is_none() {
+                return Err("unknown tab".into());
+            }
+            *state::lock(&state.split) = Some((left, right));
+        }
+        relayout(&app).map_err(|error| error.to_string())
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, left, right);
+        Err("分割畫面目前僅支援桌面版".into())
+    }
+}
+
+/// Leave split view.
+#[tauri::command]
+pub fn split_clear(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<BrowserState>();
+    let had = state::lock(&state.split).take().is_some();
+    #[cfg(desktop)]
+    {
+        if had {
+            return relayout(&app).map_err(|error| error.to_string());
+        }
+    }
+    #[cfg(mobile)]
+    let _ = had;
+    Ok(())
 }
 
 /// Geometry for a freshly created content webview, so it lands correctly

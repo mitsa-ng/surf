@@ -18,7 +18,8 @@ pub fn emit_tabs(app: &AppHandle) {
     let state = app.state::<BrowserState>();
     let snapshot = {
         let model = state::lock(&state.model);
-        state::TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id() }
+        let split = *state::lock(&state.split);
+        state::TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id(), split }
     };
     let _ = app.emit_to("chrome", TABS_EVENT, &snapshot);
 }
@@ -223,6 +224,7 @@ pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> 
     let reopen_info = snapshot_for_reopen(&state, id);
     let closed = state::lock(&state.model).close(id).ok_or(crate::CommandError::UnknownTab(id.0))?;
     remember_closed(&state, reopen_info);
+    exit_split_on_close(&state, id);
     state.cs_tokens.revoke(id);
     state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
     if let Some(view) = state::take_content_webview(app, id) {
@@ -245,6 +247,7 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
     if !state::lock(&state.model).activate(id) {
         return Err(crate::CommandError::UnknownTab(id.0));
     }
+    exit_split_on_activate(&state, id);
     let ids: Vec<TabId> = state::lock(&state.webviews).keys().copied().collect();
     for tab_id in ids {
         if let Some(view) = state::content_webview(app, tab_id) {
@@ -308,6 +311,23 @@ fn remember_closed(state: &BrowserState, info: Option<crate::state::ClosedTabInf
     let len = stack.len();
     if len > 20 {
         stack.drain(0..len - 20);
+    }
+}
+
+/// Split view survives only while both members exist.
+fn exit_split_on_close(state: &BrowserState, id: TabId) {
+    let mut split = state::lock(&state.split);
+    if matches!(*split, Some((a, b)) if a == id || b == id) {
+        *split = None;
+    }
+}
+
+/// Activating a tab outside the split leaves split view: the simplest
+/// predictable exit.
+fn exit_split_on_activate(state: &BrowserState, id: TabId) {
+    let mut split = state::lock(&state.split);
+    if matches!(*split, Some((a, b)) if a != id && b != id) {
+        *split = None;
     }
 }
 
@@ -418,6 +438,7 @@ pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::Command
         .close(id)
         .ok_or(crate::CommandError::UnknownTab(id.0))?;
     remember_closed(&state, reopen_info);
+    exit_split_on_close(&state, id);
     state.cs_tokens.revoke(id);
     state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
     drop(state);

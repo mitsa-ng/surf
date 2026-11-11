@@ -17,6 +17,8 @@ export const ui = $state<{
   tabSearchOpen: boolean;
   /** Find-in-page bar (Cmd/Ctrl+F). */
   findOpen: boolean;
+  /** Right-click menu on a tab strip row. */
+  tabMenu: null | { x: number; y: number; tabId: number };
 }>({
   panel: null,
   extensions: [],
@@ -30,6 +32,7 @@ export const ui = $state<{
   bookmarksBar: false,
   tabSearchOpen: false,
   findOpen: false,
+  tabMenu: null,
 });
 
 let started = false;
@@ -44,6 +47,7 @@ export async function initUi() {
   await Promise.all([
     refreshExtensions(),
     refreshBookmarks(),
+    refreshHistory(),
     refreshDownloads(),
     // The Rust side already applied the persisted flag at setup; this
     // only mirrors it in the UI so the header renders the right height.

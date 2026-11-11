@@ -13,7 +13,8 @@ pub fn get_tabs(app: AppHandle) -> TabsSnapshot {
 fn snapshot(app: &AppHandle) -> TabsSnapshot {
     let state = app.state::<BrowserState>();
     let model = state::lock(&state.model);
-    TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id() }
+    let split = *state::lock(&state.split);
+    TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id(), split }
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tabs, openTab, closeTab, activateTab, setPinned } from "../tabs.svelte";
+  import { ui } from "../ui.svelte";
   import { tabTitle } from "../format";
   import Icon from "./Icon.svelte";
 </script>
@@ -11,9 +12,14 @@
       class="tab"
       class:active={tab.id === tabs.activeId}
       class:pinned={tab.pinned}
+      class:split={tabs.split ? tabs.split[0] === tab.id || tabs.split[1] === tab.id : false}
       aria-selected={tab.id === tabs.activeId}
       title={tabTitle(tab)}
       onclick={() => activateTab(tab.id)}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        ui.tabMenu = { x: e.clientX, y: e.clientY, tabId: tab.id };
+      }}
     >
       <span class="label">{tabTitle(tab)}</span>
       {#if tab.incognito}
@@ -96,6 +102,9 @@
   .tab.pinned {
     max-width: 120px;
     padding: 0 24px 0 12px;
+  }
+  .tab.split {
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .tab:hover {
     background: var(--hover);

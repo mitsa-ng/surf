@@ -28,6 +28,8 @@ pub struct ClosedTabInfo {
 pub struct TabsSnapshot {
     pub tabs: Vec<TabState>,
     pub active: Option<TabId>,
+    /// Split view members, if active.
+    pub split: Option<(TabId, TabId)>,
 }
 
 pub struct BrowserState {
@@ -56,6 +58,9 @@ pub struct BrowserState {
     /// Recently closed tabs (for Cmd+Shift+T), newest last. Private tabs
     /// are never recorded.
     pub recently_closed: Mutex<Vec<crate::state::ClosedTabInfo>>,
+    /// Split view: two tab ids shown side by side (desktop only, not
+    /// persisted; a view state, not session state).
+    pub split: Mutex<Option<(TabId, TabId)>>,
     /// File-based auto sync reconciler state (desktop).
     #[cfg(desktop)]
     pub auto_sync: std::sync::Arc<crate::auto_sync::AutoSync>,
@@ -83,6 +88,7 @@ impl BrowserState {
             nav_filter: crate::nav_filter::NavFilter::default(),
             downloads: Mutex::new(Vec::new()),
             recently_closed: Mutex::new(Vec::new()),
+            split: Mutex::new(None),
             #[cfg(desktop)]
             auto_sync: std::sync::Arc::new(crate::auto_sync::AutoSync::default()),
         }

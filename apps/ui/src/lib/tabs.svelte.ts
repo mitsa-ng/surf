@@ -3,11 +3,13 @@ import * as ipc from "./ipc";
 export const tabs = $state<{
   list: ipc.TabState[];
   activeId: number | null;
+  split: [number, number] | null;
   sheetOpen: boolean;
   error: string;
 }>({
   list: [],
   activeId: null,
+  split: null,
   sheetOpen: false,
   error: "",
 });
@@ -17,6 +19,7 @@ let started = false;
 export function applySnapshot(snapshot: ipc.TabsSnapshot) {
   tabs.list = snapshot.tabs;
   tabs.activeId = snapshot.active;
+  tabs.split = snapshot.split ?? null;
 }
 
 export function activeTab(): ipc.TabState | null {
@@ -30,9 +33,9 @@ export async function init() {
   await ipc.onTabsChanged(applySnapshot);
 }
 
-export async function openTab() {
+export async function openTab(url?: string) {
   try {
-    applySnapshot(await ipc.tabOpen());
+    applySnapshot(await ipc.tabOpen(url));
     tabs.error = "";
   } catch (e) {
     tabs.error = String(e);

@@ -32,6 +32,7 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 | 日期 | 事項 |
 |---|---|
+| 2026-11-12 | 分割畫面多工＋三項小功能：**分割畫面**（`split_set/split_clear`，layout.rs 兩個內容 webview 左右各半、其他隱藏；分頁右鍵「並排顯示」或 `surf://split`（作用分頁＋第一個非無痕分頁）；成員關閉或切到非成員分頁自動退出；不持久化（視圖狀態）——release app 截圖實證 split 兩頁並排、unsplit 回全幅無殘留）；`Cmd+1..9` 跳分頁；網址列建議（書籤★＋歷史↺各取前 6、鍵盤上下導航＋Enter）；分頁右鍵選單（複製網址/複製分頁/釘選/並排/關閉；剪貼簿用 navigator.clipboard）。右鍵選單與建議未做 runtime 點擊實證（不注入鍵盤），程式碼＋型別層通過 |
 | 2026-11-12 | 釘選分頁＋重開分頁：`TabState.pinned`（serde default、storage v3 migration 加欄位、save/load roundtrip 測試）；釘選排序不變量（釘選群組恆在最左，pin/unpin 移動位置，模型測試）；TabStrip 星星釘選鈕＋釘選緊縮樣式＋隱藏關閉鈕；`tab_set_pinned`＋`tab_reopen_closed`（關閉堆疊上限 20、無痕不記錄、capture-before-close 單元測試）；`Cmd+Shift+T`／`surf://pin`／`surf://reopen`。實機 DB 實證：v3 對既有 DB 乾淨遷移（user_version 3、舊列保留）、pin→`pinned=1`、unpin→`pinned=0` |
 | 2026-11-12 | 無痕分頁：`Cmd+Shift+N`／`surf://private` 開無痕 tab（TabState 帶 `incognito` 旗標、serde default 向下相容）；不寫歷史、不進持久化 session（restore 自然不含）；TabStrip「無痕」徽章＋網址列圓角 pill＋placeholder 標示。DB 對照實證：一般分頁導航有歷史紀錄（對照組=1）、無痕分頁兩次導航皆 0 筆、persisted tabs 不含無痕。限制：WebviewStorage/cookie 仍為共用 profile（真隔离需 wry 的 ephemeral profile 支援），徽章視覺只驗到型別層 |
 | 2026-11-12 | Chrome 對齊第二批判（全部 release app 實證）：頁內搜尋（`Cmd+F` FindBar＋`find_in_page` 指令；`window.find` 在 WKWebView 無效，改用 TreeWalker＋Range 選取，實證藍底選取與捲動定位）；分頁搜尋（`Cmd+Shift+A` overlay，過濾＋點擊切換＋Enter 選第一個）；下載管理（`downloads_list`/`download_reveal` 指令＋Rust 端紀錄（上限 100 筆）＋`Cmd+Shift+J` 下載面板＋「顯示」在 Finder（僅列出的紀錄路徑可開），實證 cloudflare 下載進面板）。macOS 下載 Finished 的 path 可為空（儲存面板流程），「顯示」按鈕僅在有路徑且成功時出現 |
