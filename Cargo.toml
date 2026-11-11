@@ -6,6 +6,13 @@ members = [
     "apps/surf/src-tauri",
 ]
 
+# Local fork of wry 0.57.2: routes Android per-webview operations
+# (eval/load/url/...) through a per-webview map instead of the single
+# last-created slot, so multiple webviews on one activity each receive
+# their own IPC responses and events. Drop when upstream wry fixes it.
+[patch.crates-io]
+wry = { path = "vendor/wry" }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

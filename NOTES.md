@@ -32,6 +32,7 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 | 日期 | 事項 |
 |---|---|
+| 2026-11-12 | vendor wry 0.57.2（`vendor/wry`＋`[patch.crates-io]`）：Android 多 webview 的 per-webview eval 路由修復（`webviews` map＋`ForWebview` 訊息），content webview eval 實證 by-id 正確送達；診斷出第二層問題——主視窗的 invoke 回應/事件 eval 在 tauri-runtime-wry 的 registry 查找處靜默丟棄（證據與下一步見誠實限制）；無實體裝置（instance-swap 實機驗證仍待裝置） |
 | 2026-11-11 | M3 一批：mobile 導航過濾接線（on_navigation/on_page_load/title/initialization_script 進 ensure_tab_window）＋Android 模擬器實證（`||example.com^` 擋下、example.net 對照載入、bridge ready、歷史記錄；桌面 release app 也實證 blocked log＋對照組）；WKContentRuleList 整合（adblock crate `content-blocking` 轉換器＋objc2 膠），但發現 macOS 27.2 WebKit `addContentRuleList` segfault（純 Swift 可重現）→ 預設關閉＋env opt-in＋重現腳本入 repo；cs_send/cs_bootstrap 綁定呼叫端 webview label＋token 移出 `window.__surf`；Android deep link 修復（manifest intent-filter＋plugin mobile scheme）；桌面檔案自動同步（reconciler 雙向 merge，macOS 實證外部書籤併入＋本地回寫＋併回舊歷史）；補上 sync_export/import 漏掉的 ACL；發現 wry Android 多 webview eval 路由限制（見誠實限制） |
 | 2026-11-11 | 修復設定持久化：點選搜尋引擎直接寫入 SQLite，修正回讀字串型別；release app 實測 Google 重啟後讀回，並恢復 DuckDuckGo；封鎖清單讀取成功後才可儲存 |
 | 2026-11-11 | 分離桌面設定與擴充功能面板；設定頁僅保留搜尋、同步、封鎖規則，擴充按鈕開啟獨立安裝／管理頁；release app 畫面與無障礙樹驗收通過 |
@@ -54,7 +55,10 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 ## 已知限制（誠實標明）
 
-- **wry Android 多 webview eval 路由**：同一 activity 上只有最後建立的 webview 收得到 `eval`（IPC 回應、事件發射）。實證：只有主視窗時 invoke 全部正常；建立 `content-tab-1` 後主視窗的 5 個啟動 callback 全部遺失（`Couldn't find callback id`）。這是行動端 instance-swap 真正的根因（先前誤歸因 swiftshader tap）。在 wry 修好 per-webview eval 前，Android 上「有分頁視窗時主 UI 的 invoke 會懸死」；content webview 自身的 invoke（cs_* 橋）在它是最後建立的視窗時可運作（bridge ready 已實證）。iOS 無此機制（每個 WKWebView 獨立 handle），但 runtime 未測。
+- **wry Android 多 webview eval 路由（已本地修復一層，還有第二層）**：
+  - **第一層（已修，vendor/wry）**：wry 0.57.2 在同 activity 上只保留「最後建立的 webview」的 handle，eval/load/getUrl 等全部路由到它。已 vendor wry 進 `vendor/wry`（`[patch.crates-io]`），改為 `ActivityProxy.webviews: HashMap<WebviewId, GlobalRef>`＋`ForWebview { webview_id, op }` 訊息精準路由。實證：content webview 的 eval（cs_bootstrap 回應、事件）以 by-id 正確送達（logcat 標記驗證）、`surfBridge=ready`。上游修好後刪 patch 即可。
+  - **第二層（未解，卡在 tauri/tauri-runtime-wry）**：所有指向**主視窗**的 eval（invoke 回應、`emit_to` 事件、deep link 轉發）連 wry `InnerWebView::eval` 都沒進入（eval 頂端標記零輸出），但在 wry 修復前同一批 eval 會送到 content webview（`Couldn't find callback id`）。證據鏈：主視窗 invoke 的 fetch(ipc.localhost) 因 asset-loader 分支不被攔截→JS fallback postMessage→**命令有執行**（settings_set 寫入 DB 實證）→回應 eval 失蹤；deep link 事件 emit 同樣無 eval。最可疑處：tauri-runtime-wry `lib.rs` ~3644 `windows.0.borrow().get(&window_id)`→`webviews.iter().find(|w| w.id == webview_id)` 查找失敗時**靜默跳過**（`if let Some((Some(window), Some(webview)))` 無 else）。下一步：vendor tauri-runtime-wry，把該查找失敗顯性化（console/現有 webview eval 出錯誤），釐清主視窗的 (window_id, webview_id) 為何對不上。在這層解開前，Android 多 webview 下主 UI 的 invoke/事件仍不通；單一 webview（無分頁視窗）時全部正常。
+  - iOS 無第一層機制問題（每個 WKWebView 獨立 handle），runtime 未測。
 - 行動端 tab＝model 層＋per-tab WebviewWindow instance-swap（程式碼完成、雙 target 編譯過）；Android 受上述限制、實機驗證仍未做。
 - `cs_send` token 已移出 `window`、指令綁定呼叫端 webview label（跨 tab token 無法重放）；殘餘限制：content script 與頁面同一 JS world，頁面仍可呼叫 `send()` 偽造「自己 tab」的訊息。真正 isolated world 需平台 API。
 - Subresource 過濾（WKContentRuleList）：整合已完成（EasyList→content-blocker 轉換＋objc2 膠＋首次 page load 後安裝、規則變更 refresh），但 **macOS 27.2 的 WebKit 讓 `addContentRuleList:` 在 null proxy 上 segfault**——純 Swift 三種時序都可重現（`docs/wkcontentrulelist-crash-repro.swift`）。因此安裝預設關閉，`SURF_WK_CONTENT_RULES=1` opt-in，等 WebKit 修好再打開。轉換器單元測試覆蓋；導航層 block 不受影響（三平台可用）。iOS runtime 未測。Android shouldInterceptRequest／Windows WebResourceRequested／Linux WebKitUserContentFilter：wry 未暴露對應 hook，adapter 維持 NotImplemented。
