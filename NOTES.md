@@ -32,6 +32,7 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 | 日期 | 事項 |
 |---|---|
+| 2026-11-11 | M3 一批：mobile 導航過濾接線（on_navigation/on_page_load/title/initialization_script 進 ensure_tab_window）＋Android 模擬器實證（`||example.com^` 擋下、example.net 對照載入、bridge ready、歷史記錄；桌面 release app 也實證 blocked log＋對照組）；WKContentRuleList 整合（adblock crate `content-blocking` 轉換器＋objc2 膠），但發現 macOS 27.2 WebKit `addContentRuleList` segfault（純 Swift 可重現）→ 預設關閉＋env opt-in＋重現腳本入 repo；cs_send/cs_bootstrap 綁定呼叫端 webview label＋token 移出 `window.__surf`；Android deep link 修復（manifest intent-filter＋plugin mobile scheme）；桌面檔案自動同步（reconciler 雙向 merge，macOS 實證外部書籤併入＋本地回寫＋併回舊歷史）；補上 sync_export/import 漏掉的 ACL；發現 wry Android 多 webview eval 路由限制（見誠實限制） |
 | 2026-11-11 | 修復設定持久化：點選搜尋引擎直接寫入 SQLite，修正回讀字串型別；release app 實測 Google 重啟後讀回，並恢復 DuckDuckGo；封鎖清單讀取成功後才可儲存 |
 | 2026-11-11 | 分離桌面設定與擴充功能面板；設定頁僅保留搜尋、同步、封鎖規則，擴充按鈕開啟獨立安裝／管理頁；release app 畫面與無障礙樹驗收通過 |
 | 2026-11-11 | 修復桌面浮動面板被瀏覽 WebView 遮擋：面板開啟時擴展透明 chrome、提升原生層級；release app 畫面確認面板完整浮在內容上方，關閉後恢復工具列與瀏覽區 |
@@ -42,7 +43,9 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 ## 關鍵教訓（踩雷紀錄）
 
-- **Tauri ACL：app 有 permissions manifest 後，所有自訂 commands 都要明確 allow**。加入 content-bridge.toml 後 tab_open 等被靜默拒絕（遠端被拒會回錯誤，local 則直接不執行）；修復＝permissions/app-commands.toml 列全表＋capability 引用。
+- **Tauri ACL：app 有 permissions manifest 後，所有自訂 commands 都要明確 allow**。加入 content-bridge.toml 後 tab_open 等被靜默拒絕（遠端被拒會回錯誤，local 則直接不執行）；修復＝permissions/app-commands.toml 列全表＋capability 引用。sync_export/import 也踩過同坑（M3 只驗了 storage 測試層，按鈕實際被 ACL 擋）。
+- WKContentRuleList 的 `url-filter` 是精簡 regex 子集：不支援非捕捉群組 `(?:...)` 與交替 `|`（「Disjunctions are not supported yet」）；一般捕捉群組可以。用 adblock crate 的 `content-blocking` 轉換器（記得 `NetworkFilter::parse(line, true, ..)`，否則 NeedsDebugMode）。
+- Rust `eprintln!` 在 Android 不會進 logcat；命令錯誤要靠 JS 端 console（`Tauri/Console` tag）回傳才能看到。WebView console 在 debug build 經 CDP（`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`）可直接驅動頁面 JS，是不用 tap 的自動化路徑。
 - rquickjs 的 promise 需手動 pump：`Runtime::execute_pending_job()`，否則 async 擴充程式碼永遠停在第一個 await。
 - Xcode script phase 不繼承 shell env → bindgen 參數放 `.cargo/config.toml` `[env]`。
 - Android WebView 的 `env(safe-area-inset-bottom)` 恆為 0（即使 viewport-fit=cover）→ 需要 CSS 常數 fallback，否則按鈕被手勢列蓋住。
@@ -51,10 +54,11 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 ## 已知限制（誠實標明）
 
-- 行動端 tab＝model 層＋per-tab WebviewWindow instance-swap（程式碼完成、雙 target 編譯過）；模擬器上的 runtime 切換驗證受阻於 swiftshader 的 tap 自動化（EGL 座標漂移），需實機測試。
-- `cs_send` 的 token 在頁面 context 可讀——頁面可為「自己的 tab」偽造訊息；真正 isolated world 需平台 API。
-- iOS/Android 的 request-filter adapter 仍是 NotImplemented stub（`FilterCapabilities` 已表達差異）；macOS 導航層 block 已可用。
-- WKContentRuleList 整合（subresource blocking）＝M3。
+- **wry Android 多 webview eval 路由**：同一 activity 上只有最後建立的 webview 收得到 `eval`（IPC 回應、事件發射）。實證：只有主視窗時 invoke 全部正常；建立 `content-tab-1` 後主視窗的 5 個啟動 callback 全部遺失（`Couldn't find callback id`）。這是行動端 instance-swap 真正的根因（先前誤歸因 swiftshader tap）。在 wry 修好 per-webview eval 前，Android 上「有分頁視窗時主 UI 的 invoke 會懸死」；content webview 自身的 invoke（cs_* 橋）在它是最後建立的視窗時可運作（bridge ready 已實證）。iOS 無此機制（每個 WKWebView 獨立 handle），但 runtime 未測。
+- 行動端 tab＝model 層＋per-tab WebviewWindow instance-swap（程式碼完成、雙 target 編譯過）；Android 受上述限制、實機驗證仍未做。
+- `cs_send` token 已移出 `window`、指令綁定呼叫端 webview label（跨 tab token 無法重放）；殘餘限制：content script 與頁面同一 JS world，頁面仍可呼叫 `send()` 偽造「自己 tab」的訊息。真正 isolated world 需平台 API。
+- Subresource 過濾（WKContentRuleList）：整合已完成（EasyList→content-blocker 轉換＋objc2 膠＋首次 page load 後安裝、規則變更 refresh），但 **macOS 27.2 的 WebKit 讓 `addContentRuleList:` 在 null proxy 上 segfault**——純 Swift 三種時序都可重現（`docs/wkcontentrulelist-crash-repro.swift`）。因此安裝預設關閉，`SURF_WK_CONTENT_RULES=1` opt-in，等 WebKit 修好再打開。轉換器單元測試覆蓋；導航層 block 不受影響（三平台可用）。iOS runtime 未測。Android shouldInterceptRequest／Windows WebResourceRequested／Linux WebKitUserContentFilter：wry 未暴露對應 hook，adapter 維持 NotImplemented。
+- Android deep link `surf://` 已可達（manifest intent-filter＋plugin `mobile: [{scheme:[\"surf\"]}]`）；模擬器上事件送達已由 pm query-activities 與 intent delivery 證實，但 UI 端 navigateActive 受上述 eval 路由限制影響，Android 上完整鏈路待 wry 修復。
 - Android APK：release keystore 在 `~/surf-release.keystore`（alias `surf`，密碼 surf-release-2026）；`zipalign`＋`apksigner verify` 流程已驗證。
-- sync/crypto：檔案匯出/匯入（書籤＋歷史，去重合併）已完成；裝置間自動同步仍待做。
+- sync：檔案匯出/匯入＋**桌面自動同步**（選一個雲端資料夾內的 surf-sync.json，5 秒 reconciler 雙向去重合併）已完成並在 macOS dev 實證；行動端維持手動匯出/匯入。
 - Desktop release build：`target/release/surf-app` 已產出（bundle.active=false，只有 binary）。

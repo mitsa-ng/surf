@@ -11,7 +11,7 @@ thiserror = { workspace = true }
 url = { workspace = true }
 surf-core = { workspace = true }
 rquickjs = { version = "0.9", features = ["bindgen"] }
-adblock = "0.13"
+adblock = { version = "0.13", features = ["content-blocking"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -87,3 +87,9 @@ export const syncExport = () => invoke<string>("sync_export");
 export const syncImport = (path: string) => invoke<string>("sync_import", { path });
 
 export const panelSetOpen = (open: boolean) => invoke<void>("panel_set_open", { open });
+
+export const syncAutoGet = () => invoke<string | null>("sync_auto_get");
+
+export const syncAutoSet = (path: string | null) => invoke<string | null>("sync_auto_set", { path });
+
+export const pickSyncFile = () => invoke<string | null>("pick_sync_file");

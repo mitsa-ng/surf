@@ -1,3 +1,5 @@
+pub mod content_blocker;
+
 use url::Url;
 
 /// What a platform's request-filter adapter can actually enforce. Rules

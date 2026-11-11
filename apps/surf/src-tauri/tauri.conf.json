@@ -31,7 +31,11 @@
           ]
         }
       ],
-      "mobile": []
+      "mobile": [
+        {
+          "scheme": ["surf"]
+        }
+      ]
     }
   }
 }

@@ -41,6 +41,9 @@ pub struct BrowserState {
     pub secrets: std::sync::Arc<dyn surf_core::crypto::SecretStore + Send + Sync>,
     /// Top-level navigation filter engine (dedicated thread).
     pub nav_filter: crate::nav_filter::NavFilter,
+    /// File-based auto sync reconciler state (desktop).
+    #[cfg(desktop)]
+    pub auto_sync: std::sync::Arc<crate::auto_sync::AutoSync>,
 }
 
 impl BrowserState {
@@ -62,6 +65,8 @@ impl BrowserState {
             #[cfg(not(target_os = "macos"))]
             secrets: std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new()),
             nav_filter: crate::nav_filter::NavFilter::default(),
+            #[cfg(desktop)]
+            auto_sync: std::sync::Arc::new(crate::auto_sync::AutoSync::default()),
         }
     }
 }
@@ -127,6 +132,16 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         if !filters.is_empty() {
             state.nav_filter.start(filters);
         }
+    }
+    #[cfg(desktop)]
+    {
+        let path = {
+            let state = app.state::<BrowserState>();
+            let db = lock(&state.db);
+            db.ext_kv_get("sys", "setting:sync_file").ok().flatten()
+        };
+        app.state::<BrowserState>().auto_sync.configure(path.map(std::path::PathBuf::from));
+        crate::auto_sync::start(handle.clone());
     }
     restore_extensions(&handle);
     dev_auto_install(&handle);

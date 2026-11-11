@@ -8,6 +8,12 @@ use crate::tabview::TabView;
 
 const TABS_EVENT: &str = "tabs://changed";
 
+/// Label scheme for content webviews, shared by creation, lookup, the
+/// token binding in commands, and subresource-filter installs.
+pub fn content_label(id: TabId) -> String {
+    format!("content-{}", id.0)
+}
+
 pub fn emit_tabs(app: &AppHandle) {
     let state = app.state::<BrowserState>();
     let snapshot = {
@@ -49,11 +55,64 @@ fn diagnose_bridge(app: &AppHandle, id: TabId) {
     });
 }
 
+/// Navigation verdict shared by desktop child webviews and mobile tab
+/// windows. A blocked navigation never reaches on_page_load, so the
+/// loading flag the omnibox set must be cleared here.
+fn nav_verdict(app: &AppHandle, id: TabId, url: &Url) -> bool {
+    let state = app.state::<BrowserState>();
+    let allowed = state.nav_filter.allows(url);
+    if !allowed {
+        eprintln!("[nav-filter] blocked {url}");
+        state::lock(&state.model).set_loading(id, false);
+        emit_tabs(app);
+    }
+    allowed
+}
+
+/// Model bookkeeping shared by desktop child webviews and mobile tab
+/// windows: loading state, committed URL, history, and the interim host
+/// title until the document-title event fires.
+fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool) {
+    let state = app.state::<BrowserState>();
+    {
+        let mut model = state::lock(&state.model);
+        if started {
+            model.set_loading(id, true);
+            if let Some(u) = &url {
+                model.set_url(id, u.clone());
+            }
+        } else {
+            model.set_loading(id, false);
+            if let Some(u) = &url {
+                model.set_url(id, u.clone());
+                if u.scheme() == "http" || u.scheme() == "https" {
+                    if let Some(host) = u.host_str() {
+                        model.set_title(id, host.to_owned());
+                    }
+                    let _ = state::lock(&state.db).record_visit(u, None);
+                }
+            }
+        }
+    }
+    // WKContentRuleList installs must wait for the first finished load
+    // (the controller's proxy is null before the page initializes).
+    if !started {
+        crate::filters::tab_loaded(app, id);
+    }
+    emit_tabs(app);
+}
+
+fn title_update(app: &AppHandle, id: TabId, title: String) {
+    let state = app.state::<BrowserState>();
+    state::lock(&state.model).set_title(id, title);
+    emit_tabs(app);
+}
+
 #[cfg(desktop)]
 fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<Url>) {
     let state = app.state::<BrowserState>();
     let is_active = state::lock(&state.model).active_id() == Some(id);
-    let label = format!("content-{}", id.0);
+    let label = content_label(id);
     let webview_url = match &url {
         Some(u) => tauri::WebviewUrl::External(u.clone()),
         None => tauri::WebviewUrl::App("start.html".into()),
@@ -67,6 +126,7 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     let tab_for_title = id;
     let download_handle = app.clone();
     let app_handle_nav = app.clone();
+    let nav_tab = id;
     let builder = tauri::webview::WebviewBuilder::new(&label, webview_url)
         .initialization_script(crate::content_bridge::bootstrap_script(&token))
         .on_download(move |_wv, event| {
@@ -97,48 +157,13 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                 _ => true,
             }
         })
-        .on_navigation(move |url| {
-            let state = app_handle_nav.state::<BrowserState>();
-            let allowed = state.nav_filter.allows(url);
-            if !allowed {
-                eprintln!("[nav-filter] blocked {url}");
-            }
-            allowed
-        })
+        .on_navigation(move |url| nav_verdict(&app_handle_nav, nav_tab, url))
         .on_page_load(move |_wv, payload| {
-            let app = handle.clone();
             let url = Some(payload.url().clone());
             let started = payload.event() == tauri::webview::PageLoadEvent::Started;
-            let state = app.state::<BrowserState>();
-            {
-                let mut model = state::lock(&state.model);
-                if started {
-                    model.set_loading(tab_for_load, true);
-                    if let Some(u) = &url {
-                        model.set_url(tab_for_load, u.clone());
-                    }
-                } else {
-                    model.set_loading(tab_for_load, false);
-                    if let Some(u) = &url {
-                        model.set_url(tab_for_load, u.clone());
-                        // Interim title until the document-title event fires.
-                        if u.scheme() == "http" || u.scheme() == "https" {
-                            if let Some(host) = u.host_str() {
-                                model.set_title(tab_for_load, host.to_owned());
-                            }
-                            let _ = state::lock(&state.db).record_visit(u, None);
-                        }
-                    }
-                }
-            }
-            emit_tabs(&app);
+            page_load_update(&handle, tab_for_load, url, started);
         })
-        .on_document_title_changed(move |_wv, title| {
-            let app = title_handle.clone();
-            let state = app.state::<BrowserState>();
-            state::lock(&state.model).set_title(tab_for_title, title);
-            emit_tabs(&app);
-        });
+        .on_document_title_changed(move |_wv, title| title_update(&title_handle, tab_for_title, title));
 
     let (pos, size) = crate::layout::content_rect(window);
     match window.add_child(builder, pos, size) {
@@ -148,6 +173,8 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                 let _ = view.hide();
             }
             state::lock(&state.webviews).insert(id, view);
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            crate::filters::apply_filters(app, id);
             let _ = crate::layout::relayout_window(window);
             // A fresh tab means the user types next: keyboard focus belongs
             // to the chrome (address bar), not the page.
@@ -271,7 +298,7 @@ pub fn persist_session(app: &AppHandle) {
 
 #[cfg(mobile)]
 fn tab_window(app: &AppHandle, id: TabId) -> Option<tauri::WebviewWindow<Wry>> {
-    app.get_webview_window(&format!("content-{id}"))
+    app.get_webview_window(&content_label(id))
 }
 
 #[cfg(mobile)]
@@ -281,20 +308,30 @@ pub fn ensure_tab_window(app: &AppHandle, id: TabId, url: Option<Url>) -> Result
     }
     let state = app.state::<BrowserState>();
     let token = state.cs_tokens.issue(id);
+    drop(state);
     crate::content_bridge::register_content_sink(app, id);
-    let webview_url = match &url {
-        Some(u) => tauri::WebviewUrl::External(u.clone()),
-        None => tauri::WebviewUrl::App("start.html".into()),
-    };
     let window_url = match &url {
         Some(u) => tauri::WebviewUrl::External(u.clone()),
         None => tauri::WebviewUrl::App("start.html".into()),
     };
-    let _ = token;
-    let _ = webview_url;
-    tauri::WebviewWindowBuilder::new(app, format!("content-{id}"), window_url)
+    let nav_handle = app.clone();
+    let nav_tab = id;
+    let load_handle = app.clone();
+    let title_handle = app.clone();
+    tauri::WebviewWindowBuilder::new(app, content_label(id), window_url)
         .title("Surf")
-        .build()
+        .initialization_script(crate::content_bridge::bootstrap_script(&token))
+        .on_navigation(move |url| nav_verdict(&nav_handle, nav_tab, url))
+        .on_page_load(move |_w, payload| {
+            let url = Some(payload.url().clone());
+            let started = payload.event() == tauri::webview::PageLoadEvent::Started;
+            page_load_update(&load_handle, id, url, started);
+        })
+        .on_document_title_changed(move |_w, title| title_update(&title_handle, id, title))
+        .build()?;
+    #[cfg(target_os = "ios")]
+    crate::filters::apply_filters(app, id);
+    Ok(tab_window(app, id).expect("window just built"))
 }
 
 #[cfg(mobile)]

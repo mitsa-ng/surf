@@ -1,4 +1,6 @@
 mod api_impl;
+#[cfg(desktop)]
+mod auto_sync;
 mod bg;
 mod commands;
 mod content_bridge;
@@ -12,6 +14,8 @@ mod nav_filter;
 mod menus;
 mod state;
 mod tabview;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod wk_rules;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
@@ -75,6 +79,9 @@ pub fn run() {
             commands::rules_set,
             commands::sync_export,
             commands::sync_import,
+            commands::sync_auto_get,
+            commands::sync_auto_set,
+            commands::pick_sync_file,
             layout::panel_set_open,
         ])
         .run(tauri::generate_context!())

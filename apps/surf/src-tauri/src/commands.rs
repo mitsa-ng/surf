@@ -348,17 +348,32 @@ pub fn history_recent(app: AppHandle, limit: Option<usize>) -> Result<Vec<Histor
     Ok(rows)
 }
 
+/// Tokens are bound to the webview they were issued for: a content
+/// webview may only exercise its own tab's token.
+fn require_caller_tab(
+    webview: &tauri::Webview,
+    state: &BrowserState,
+    token: &str,
+) -> Result<surf_core::tabs::TabId, crate::CommandError> {
+    let id = state
+        .cs_tokens
+        .resolve(token)
+        .ok_or_else(|| crate::CommandError::Message("unknown content token".into()))?;
+    if webview.label() != crate::manager::content_label(id) {
+        return Err(crate::CommandError::Message("token is not valid for this webview".into()));
+    }
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn cs_bootstrap(
     app: AppHandle,
+    webview: tauri::Webview,
     token: String,
     url: String,
 ) -> Result<serde_json::Value, crate::CommandError> {
     let state = app.state::<BrowserState>();
-    let id = state
-        .cs_tokens
-        .resolve(&token)
-        .ok_or_else(|| crate::CommandError::Message("unknown content token".into()))?;
+    let id = require_caller_tab(&webview, &state, &token)?;
     let target = url::Url::parse(&url).map_err(|e| crate::CommandError::Message(e.to_string()))?;
 
     let registry = state::lock(&state.registry);
@@ -391,16 +406,14 @@ pub fn cs_bootstrap(
 #[tauri::command]
 pub fn cs_send(
     app: AppHandle,
+    webview: tauri::Webview,
     token: String,
     name: String,
     payload: serde_json::Value,
     ext: Option<String>,
 ) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
-    let id = state
-        .cs_tokens
-        .resolve(&token)
-        .ok_or_else(|| crate::CommandError::Message("unknown content token".into()))?;
+    let id = require_caller_tab(&webview, &state, &token)?;
     let to = match ext {
         Some(e) => surf_ext_host::router::Endpoint::Extension(surf_ext_host::ExtensionId(e)),
         None => surf_ext_host::router::Endpoint::Host,
@@ -441,16 +454,19 @@ pub fn rules_get(app: AppHandle) -> Result<Vec<String>, crate::CommandError> {
 
 #[tauri::command]
 pub fn rules_set(app: AppHandle, filters: Vec<String>) -> Result<Vec<String>, crate::CommandError> {
-    let state = app.state::<BrowserState>();
-    let save = crate::nav_filter::save_filters(&state::lock(&state.db), &filters)
-        .map_err(|e| crate::CommandError::Message(e.to_string()));
-    save?;
-    if !filters.is_empty() {
-        state.nav_filter.start(filters);
-    } else {
-        // Empty list: drop the engine so everything is allowed.
-        state.nav_filter.start(vec!["@@*".into()]);
+    {
+        let state = app.state::<BrowserState>();
+        crate::nav_filter::save_filters(&state::lock(&state.db), &filters)
+            .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        if !filters.is_empty() {
+            state.nav_filter.start(filters);
+        } else {
+            // Empty list: drop the engine so everything is allowed.
+            state.nav_filter.start(vec!["@@*".into()]);
+        }
     }
+    crate::filters::refresh_all(&app);
+    let state = app.state::<BrowserState>();
     let saved = crate::nav_filter::load_filters(&state::lock(&state.db));
     Ok(saved)
 }
@@ -486,4 +502,71 @@ pub async fn sync_import(app: AppHandle, path: String) -> Result<String, crate::
         db.import_all(&payload).map_err(|e| crate::CommandError::Message(e.to_string()))?
     };
     Ok(format!("匯入完成：書籤 +{b}，瀏覽紀錄 +{h}"))
+}
+
+/// Auto sync (desktop): reconcile the database with one cloud-synced
+/// surf-sync.json every few seconds. See auto_sync.rs.
+#[tauri::command]
+pub fn sync_auto_get(app: AppHandle) -> Result<Option<String>, crate::CommandError> {
+    #[cfg(desktop)]
+    {
+        let state = app.state::<BrowserState>();
+        let db = state::lock(&state.db);
+        Ok(db.ext_kv_get("sys", "setting:sync_file").ok().flatten())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err(crate::CommandError::Message("自動同步目前僅支援桌面版".into()))
+    }
+}
+
+#[tauri::command]
+pub fn sync_auto_set(app: AppHandle, path: Option<String>) -> Result<Option<String>, crate::CommandError> {
+    #[cfg(desktop)]
+    {
+        let configured = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            Some(p) => {
+                let path = std::path::PathBuf::from(p);
+                if !path.is_absolute() {
+                    return Err(crate::CommandError::Message("同步檔需要絕對路徑".into()));
+                }
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                Some(path)
+            }
+            None => None,
+        };
+        let state = app.state::<BrowserState>();
+        state::lock(&state.db)
+            .ext_kv_set("sys", "setting:sync_file", configured.as_ref().map(|p| p.to_string_lossy()).as_deref().unwrap_or(""))
+            .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        state.auto_sync.configure(configured.clone());
+        Ok(configured.map(|p| p.to_string_lossy().into_owned()))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, path);
+        Err(crate::CommandError::Message("自動同步目前僅支援桌面版".into()))
+    }
+}
+
+#[tauri::command]
+pub fn pick_sync_file(app: AppHandle) -> Result<Option<String>, crate::CommandError> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_dialog::DialogExt;
+        let file = app
+            .dialog()
+            .file()
+            .set_file_name("surf-sync.json")
+            .blocking_save_file();
+        Ok(file.map(|f| f.to_string()))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err(crate::CommandError::Message("自動同步目前僅支援桌面版".into()))
+    }
 }

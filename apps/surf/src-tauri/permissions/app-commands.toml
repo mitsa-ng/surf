@@ -26,5 +26,10 @@ commands.allow = [
     "settings_set",
     "rules_get",
     "rules_set",
+    "sync_export",
+    "sync_import",
+    "sync_auto_get",
+    "sync_auto_set",
+    "pick_sync_file",
     "panel_set_open",
 ]

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { rulesGet, rulesSet, syncExport, syncImport } from "../ipc";
+  import { isMobileDevice } from "../platform";
+  import { pickSyncFile, rulesGet, rulesSet, syncAutoGet, syncAutoSet, syncExport, syncImport } from "../ipc";
 
   const engines = ["duckduckgo", "google", "bing"] as const;
   type Engine = (typeof engines)[number];
+  const isMobile = isMobileDevice();
 
   let engine = $state<Engine>("duckduckgo");
   let engineLoaded = $state(false);
@@ -16,6 +18,8 @@
   let blocklistError = $state("");
   let syncPath = $state("");
   let syncNotice = $state("");
+  let autoSyncPath = $state<string | null>(null);
+  let autoSyncNotice = $state("");
 
   async function doExport() {
     try {
@@ -24,6 +28,35 @@
     } catch (e) {
       syncNotice = String(e);
     }
+  }
+
+  async function enableAutoSync() {
+    autoSyncNotice = "";
+    try {
+      const picked = await pickSyncFile();
+      if (!picked) return;
+      autoSyncPath = await syncAutoSet(picked);
+      autoSyncNotice = `自動同步中：${autoSyncPath}`;
+    } catch (e) {
+      autoSyncNotice = String(e);
+    }
+  }
+
+  async function disableAutoSync() {
+    autoSyncNotice = "";
+    try {
+      await syncAutoSet(null);
+      autoSyncPath = null;
+      autoSyncNotice = "已停止自動同步";
+    } catch (e) {
+      autoSyncNotice = String(e);
+    }
+  }
+
+  if (!isMobile) {
+    void syncAutoGet()
+      .then((path) => (autoSyncPath = path))
+      .catch(() => (autoSyncPath = null));
   }
 
   async function doImport() {
@@ -117,6 +150,18 @@
     <button onclick={() => doImport()}>匯入</button>
   </div>
   {#if syncNotice}<p class="notice">{syncNotice}</p>{/if}
+  {#if !isMobile}
+    <div class="row">
+      {#if autoSyncPath}
+        <button onclick={() => disableAutoSync()}>停止自動同步</button>
+        <span class="notice" role="status">自動同步中：{autoSyncPath}</span>
+      {:else}
+        <button onclick={() => enableAutoSync()}>啟用自動同步…</button>
+        <span class="notice">選一個雲端資料夾裡的 surf-sync.json，兩台裝置指同一個檔案即可互同步</span>
+      {/if}
+    </div>
+    {#if autoSyncNotice}<p class="notice" role="status" aria-live="polite">{autoSyncNotice}</p>{/if}
+  {/if}
   <h3>封鎖清單（EasyList 語法，擋頂層導航）</h3>
   <textarea bind:value={blocklist} rows="6" spellcheck="false" aria-label="封鎖規則"></textarea>
   <div class="row">

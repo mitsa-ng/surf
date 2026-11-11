@@ -3,9 +3,13 @@
 //! Content webviews load remote pages, so they get no Tauri capability.
 //! The host injects one init script carrying a per-tab token; page-side
 //! scripts call back through two commands (`cs_bootstrap`, `cs_send`)
-//! that require the token. The token is readable by page JS — a page can
-//! forge messages *for its own tab*. Real isolated-world isolation needs
-//! platform APIs wry does not expose; documented in NOTES.md.
+//! that require the token and are bound to the issuing webview's label,
+//! so a token from one tab cannot be replayed from another. The token
+//! stays in the init-script closure and is not exposed on `window`. The
+//! residual limit: content scripts share the page's JS world, so the
+//! page can still call the exposed `send` for its own tab. Real
+//! isolated-world isolation needs platform APIs wry does not expose;
+//! documented in NOTES.md.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -60,7 +64,7 @@ pub fn bootstrap_script(token: &str) -> String {
   const send = (name, payload, ext) => window.__TAURI_INTERNALS__
     ? window.__TAURI_INTERNALS__.invoke("cs_send", {{ token: TOKEN, name, payload: payload === undefined ? null : payload, ext: ext || null }})
     : null;
-  window.__surf = {{ token: TOKEN, send, receive: null }};
+  window.__surf = {{ send, receive: null }};
   const evalAll = (scripts) => {{
     for (const s of scripts || []) {{
       try {{ (0, eval)(s.code); }} catch (e) {{ console.error("surf content script failed", e); }}
