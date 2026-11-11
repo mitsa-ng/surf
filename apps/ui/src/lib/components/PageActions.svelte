@@ -1,26 +1,31 @@
 <script lang="ts">
-  import { ui, toggleBookmark, isBookmarked, togglePanel } from "../ui.svelte";
-  import { tabs } from "../tabs.svelte";
+  import { ui, togglePanel } from "../ui.svelte";
   import Icon from "./Icon.svelte";
 
-  const active = $derived(tabs.list.find((t) => t.id === tabs.activeId) ?? null);
+  // Panel buttons follow Chrome's shape: 28px icon-only controls, the
+  // open panel marked by the same hover fill so the state is visible
+  // without adding a second accent color.
+  const panels = [
+    { name: "downloads", icon: "download", label: "下載項目" },
+    { name: "history", icon: "history", label: "瀏覽紀錄" },
+    { name: "bookmarks", icon: "list", label: "書籤" },
+    { name: "extensions", icon: "puzzle", label: "擴充功能" },
+    { name: "settings", icon: "settings", label: "設定" },
+  ] as const;
 </script>
 
 <div class="actions">
-  <button
-    class="star"
-    class:on={isBookmarked(active?.url ?? null)}
-    onclick={() => toggleBookmark()}
-    aria-label={isBookmarked(active?.url ?? null) ? "取消書籤" : "加入書籤"}
-    title="書籤"
-  >
-    <Icon name="star" />
-  </button>
-  <button onclick={() => togglePanel("bookmarks")} aria-label="書籤列表" title="書籤">書籤</button>
-  <button onclick={() => togglePanel("history")} aria-label="瀏覽紀錄" title="歷史">歷史</button>
-  <button onclick={() => togglePanel("downloads")} aria-label="下載項目" title="下載">下載</button>
-  <button onclick={() => togglePanel("extensions")} aria-label="擴充功能" title="擴充功能">擴充</button>
-  <button onclick={() => togglePanel("settings")} aria-label="設定" title="設定">設定</button>
+  {#each panels as p (p.name)}
+    <button
+      class:on={ui.panel === p.name}
+      onclick={() => togglePanel(p.name)}
+      aria-label={p.label}
+      aria-pressed={ui.panel === p.name}
+      title={p.label}
+    >
+      <Icon name={p.icon} />
+    </button>
+  {/each}
 </div>
 
 <style>
@@ -28,21 +33,19 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    margin-left: 4px;
     flex: none;
   }
   button {
-    height: 30px;
-    padding: 0 8px;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 12px;
   }
-  button:hover {
+  button:hover,
+  button.on {
     background: var(--hover);
     color: var(--text);
-  }
-  .star.on {
-    color: var(--accent);
   }
 </style>

@@ -8,6 +8,9 @@ export interface TabState {
   loading: boolean;
   incognito?: boolean;
   pinned?: boolean;
+  /** Mirrored webview history state for the disabled nav buttons. */
+  canBack?: boolean;
+  canForward?: boolean;
 }
 
 export interface TabsSnapshot {
@@ -49,6 +52,8 @@ export const tabBack = (id: number) => invoke<void>("tab_back", { id });
 export const tabForward = (id: number) => invoke<void>("tab_forward", { id });
 
 export const tabReload = (id: number) => invoke<void>("tab_reload", { id });
+
+export const tabStop = (id: number) => invoke<void>("tab_stop", { id });
 
 export const filterCapabilities = () => invoke<FilterCapabilities>("filter_capabilities");
 
@@ -125,3 +130,10 @@ export const downloadReveal = (path: string) => invoke<void>("download_reveal", 
 
 export const findInPage = (id: number, query: string, backward: boolean) =>
   invoke<void>("find_in_page", { id, query, backward });
+
+/** The content webview reports its live match count after each find. */
+export const onFindCount = (handler: (tab: number, count: number) => void): Promise<UnlistenFn> =>
+  listen<{ tab: number; count: number }>("find://count", (event) => handler(event.payload.tab, event.payload.count));
+
+/** Take the cold-start deep link queued before this UI mounted. */
+export const deeplinkTake = () => invoke<string | null>("deeplink_take");

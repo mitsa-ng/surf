@@ -3,7 +3,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, openIncognito, reopenClosed, setPinned, closeTab, activateTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
   import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
-  import { overlaySetOpen, panelSetOpen, splitClear, splitSet } from "./lib/ipc";
+  import { deeplinkTake, overlaySetOpen, panelSetOpen, splitClear, splitSet } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
@@ -22,17 +22,42 @@
   $effect(() => {
     if (isMobile) return;
     const open = ui.panel !== null;
-    document.body.classList.toggle("panel-open", open);
     void panelSetOpen(open).catch((error) => console.error(String(error)));
   });
 
-  // Any chrome overlay (tab menu, tab search, address suggestions) needs
-  // the chrome webview to extend below the chrome stack, above content.
+  // Any chrome overlay (tab menu, tab search, address suggestions, find
+  // bar) needs the chrome webview to extend below the chrome stack, above
+  // content. While the chrome covers more than its stack, its body must
+  // be transparent so the page stays visible underneath.
   $effect(() => {
     if (isMobile) return;
-    const overlay = ui.tabMenu !== null || ui.tabSearchOpen || ui.suggestOpen;
+    const overlay = ui.tabMenu !== null || ui.tabSearchOpen || ui.suggestOpen || ui.findOpen;
+    document.body.classList.toggle("chrome-expanded", ui.panel !== null || overlay);
     void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
   });
+
+  // surf:// deep links map onto normal actions; shared by the runtime
+  // event and the cold-start launch URL.
+  function handleDeepLink(raw: string) {
+    const url = String(raw);
+    if (url === "surf://settings") togglePanel("settings");
+    else if (url === "surf://private") void openIncognito();
+    else if (url === "surf://pin") {
+      const id = tabs.activeId;
+      const tab = tabs.list.find((t) => t.id === id);
+      if (id !== null && tab) void setPinned(id, !tab.pinned);
+    } else if (url === "surf://reopen") void reopenClosed();
+    else if (url === "surf://split") {
+      const active = tabs.activeId;
+      const other = tabs.list.find((t) => t.id !== active && !t.incognito)?.id ?? null;
+      if (active !== null && other !== null) void splitSet(active, other).catch(console.error);
+    } else if (url === "surf://unsplit") void splitClear().catch(console.error);
+    else if (url === "surf://tabs") toggleTabSearch();
+    else if (url.startsWith("surf://open?url=")) {
+      const target = decodeURIComponent(url.slice("surf://open?url=".length));
+      void navigateActive(target);
+    }
+  }
 
   onMount(() => {
     void init();
@@ -68,27 +93,19 @@
             break;
         }
       }),
-      listen<string>("deeplink://open", (e) => {
-        const url = e.payload;
-        if (url === "surf://settings") togglePanel("settings");
-        else if (url === "surf://private") void openIncognito();
-        else if (url === "surf://pin") {
-          const id = tabs.activeId;
-          const tab = tabs.list.find((t) => t.id === id);
-          if (id !== null && tab) void setPinned(id, !tab.pinned);
-        } else if (url === "surf://reopen") void reopenClosed();
-        else if (url === "surf://split") {
-          const active = tabs.activeId;
-          const other = tabs.list.find((t) => t.id !== active && !t.incognito)?.id ?? null;
-          if (active !== null && other !== null) void splitSet(active, other).catch(console.error);
-        } else if (url === "surf://unsplit") void splitClear().catch(console.error);
-        else if (url === "surf://tabs") toggleTabSearch();
-        else if (url.startsWith("surf://open?url=")) {
-          const target = decodeURIComponent(url.slice("surf://open?url=".length));
-          void navigateActive(target);
-        }
-      }),
+      listen<string>("deeplink://open", (e) => handleDeepLink(e.payload)),
     ];
+    // A deep link that arrived before this UI mounted (CLI launch with a
+    // URL) is queued Rust-side; take it once the tab model exists.
+    void (async () => {
+      try {
+        await init();
+        const queued = await deeplinkTake();
+        if (queued) handleDeepLink(queued);
+      } catch (e) {
+        console.error(String(e));
+      }
+    })();
     return () => {
       window.removeEventListener("surf:navigate", onNavigate);
       void Promise.all(unlisten).then((fns) => fns.forEach((fn: UnlistenFn) => fn()));
@@ -156,7 +173,7 @@
     <BottomBar />
   </main>
 {:else}
-  <header style:height={`${80 + (ui.bookmarksBar ? 28 : 0)}px`}>
+  <header style:height={`${87 + (ui.bookmarksBar ? 28 : 0)}px`}>
     <TabStrip />
     <Toolbar bind:this={toolbar} />
     {#if ui.bookmarksBar}

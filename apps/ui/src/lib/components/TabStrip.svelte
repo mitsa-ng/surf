@@ -1,11 +1,16 @@
 <script lang="ts">
   import { tabs, openTab, closeTab, activateTab, setPinned } from "../tabs.svelte";
-  import { ui } from "../ui.svelte";
+  import { ui, toggleTabSearch } from "../ui.svelte";
   import { tabTitle } from "../format";
   import Icon from "./Icon.svelte";
+  import Favicon from "./Favicon.svelte";
 </script>
 
 <div class="strip" role="tablist" aria-label="分頁">
+  <!-- The traffic lights own the first 78px; Chrome puts tab search here. -->
+  <button class="tab-search" onclick={() => toggleTabSearch()} aria-label="搜尋分頁" title="搜尋分頁（⇧⌘A）">
+    <Icon name="chevronDown" />
+  </button>
   {#each tabs.list as tab (tab.id)}
     <button
       role="tab"
@@ -15,18 +20,27 @@
       class:split={tabs.split ? tabs.split[0] === tab.id || tabs.split[1] === tab.id : false}
       aria-selected={tab.id === tabs.activeId}
       title={tabTitle(tab)}
+      data-tab-id={tab.id}
       onclick={() => activateTab(tab.id)}
       oncontextmenu={(e) => {
         e.preventDefault();
         ui.tabMenu = { x: e.clientX, y: e.clientY, tabId: tab.id };
       }}
     >
-      <span class="label">{tabTitle(tab)}</span>
-      {#if tab.incognito}
-        <span class="private-mark" aria-label="無痕分頁" title="無痕">無痕</span>
-      {/if}
-      {#if tab.loading}
-        <span class="loading-dot" aria-label="載入中"></span>
+      <span class="head">
+        <Favicon url={tab.url} size={16} />
+        {#if !tab.pinned}
+          <span class="label">{tabTitle(tab)}</span>
+          {#if tab.incognito}
+            <span class="private-mark" aria-label="無痕分頁" title="無痕">無痕</span>
+          {/if}
+          {#if tab.loading}
+            <span class="loading-dot" aria-label="載入中"></span>
+          {/if}
+        {/if}
+      </span>
+      {#if tab.id === tabs.activeId}
+        <span class="underline" aria-hidden="true"></span>
       {/if}
       <span
         class="pin"
@@ -77,31 +91,53 @@
 <style>
   .strip {
     display: flex;
-    align-items: stretch;
-    gap: 1px;
-    height: 36px;
-    padding: 4px 6px 0;
+    align-items: flex-start;
+    gap: 6px;
+    height: 40px;
+    padding: 6px 6px 0 78px;
+    background: var(--strip-surface);
     overflow-x: auto;
     scrollbar-width: none;
   }
   .strip::-webkit-scrollbar {
     display: none;
   }
+  .tab-search {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 24px;
+    margin-top: 5px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+  }
+  .tab-search:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
   .tab {
     position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
-    min-width: 0;
-    max-width: 200px;
-    flex: 0 1 auto;
-    padding: 0 28px 0 12px;
-    border-radius: 6px 6px 0 0;
+    min-width: 48px;
+    max-width: 240px;
+    /* Chrome tabs share the strip equally: grow from zero, not from the
+       content width, so tabs stay the same size however long their titles. */
+    flex: 1 1 0;
+    height: 34px;
+    padding: 0 28px 0 10px;
+    border-radius: 10px 10px 0 0;
     color: var(--text-secondary);
+    font-size: 12px;
   }
   .tab.pinned {
-    max-width: 120px;
-    padding: 0 24px 0 12px;
+    flex: none;
+    min-width: 34px;
+    max-width: 34px;
+    padding: 0 9px;
+    justify-content: center;
   }
   .tab.split {
     box-shadow: inset 2px 0 0 var(--accent);
@@ -109,19 +145,48 @@
   .tab:hover {
     background: var(--hover);
   }
+  /* The active tab is a continuation of the toolbar surface: same fill,
+     and the GM3-style outward curves at its bottom corners connect it to
+     the toolbar below. The accent underline stays as the Surf identity
+     moment (DESIGN.md: accent only marks the active tab). */
   .tab.active {
-    background: var(--bg);
+    background: var(--toolbar-surface);
     color: var(--text);
+    z-index: 2;
   }
-  /* The one deliberate accent moment: which tab you are in. */
+  .tab.active::before,
   .tab.active::after {
     content: "";
+    position: absolute;
+    bottom: 0;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+  }
+  .tab.active::before {
+    left: -10px;
+    background: radial-gradient(circle at 0 0, transparent 9.5px, var(--toolbar-surface) 10px);
+  }
+  .tab.active::after {
+    right: -10px;
+    background: radial-gradient(circle at 100% 0, transparent 9.5px, var(--toolbar-surface) 10px);
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+  }
+  /* The one deliberate accent moment: which tab you are in. */
+  .underline {
     position: absolute;
     left: 8px;
     right: 8px;
     bottom: 0;
     height: 2px;
     background: var(--accent);
+    pointer-events: none;
   }
   .label {
     overflow: hidden;
@@ -159,7 +224,7 @@
     opacity: 0;
   }
   .tab.pinned .pin {
-    right: 4px;
+    right: 2px;
     color: var(--accent);
     opacity: 0.7;
   }
@@ -196,15 +261,14 @@
     color: var(--text);
   }
   .new-tab {
+    flex: none;
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 28px;
-    margin: 0 2px;
+    width: 24px;
+    height: 24px;
+    margin-top: 5px;
     border-radius: 6px;
     color: var(--text-secondary);
-    align-self: center;
-    flex: none;
   }
   .new-tab:hover {
     background: var(--hover);

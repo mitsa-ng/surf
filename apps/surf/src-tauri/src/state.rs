@@ -65,6 +65,9 @@ pub struct BrowserState {
     /// Split view: two tab ids shown side by side (desktop only, not
     /// persisted; a view state, not session state).
     pub split: Mutex<Option<(TabId, TabId)>>,
+    /// A deep link that arrived at cold start, before the chrome UI
+    /// mounted; the UI takes it once the tab model is ready.
+    pub launch_deeplink: Mutex<Option<String>>,
     /// File-based auto sync reconciler state (desktop).
     #[cfg(desktop)]
     pub auto_sync: std::sync::Arc<crate::auto_sync::AutoSync>,
@@ -94,6 +97,7 @@ impl BrowserState {
             downloads: Mutex::new(Vec::new()),
             recently_closed: Mutex::new(Vec::new()),
             split: Mutex::new(None),
+            launch_deeplink: Mutex::new(None),
             #[cfg(desktop)]
             auto_sync: std::sync::Arc::new(crate::auto_sync::AutoSync::default()),
         }
@@ -114,8 +118,12 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     {
         let builder = WindowBuilder::new(app, MAIN_LABEL);
         #[cfg(target_os = "macos")]
-        // Keep child WebViews below the native title bar.
-        let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
+        // Chrome-style: the chrome stack covers the window top and the
+        // traffic lights float over the tab strip, so the content view
+        // must extend under the (hidden) title bar.
+        let builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
         let window = builder
             .title("Surf")
             .inner_size(1200.0, 800.0)

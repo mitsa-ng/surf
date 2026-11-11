@@ -9,6 +9,13 @@
   --accent: #0a7fa8;
   --hairline: rgba(29, 29, 31, 0.1);
   --hover: rgba(29, 29, 31, 0.06);
+  /* Chrome-parity chrome surfaces: the toolbar is the lightest chrome
+     surface, the tab strip and input fields sit one step deeper, in both
+     themes. Verified: secondary 5.5 on toolbar, 5.1 on strip/field
+     (light), 5.2 on toolbar, 5.8 on strip/field (dark). */
+  --toolbar-surface: #f6f5f4;
+  --strip-surface: #ecebe9;
+  --field: #ecebe9;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,6 +27,9 @@
     --accent: #4fb3d9;
     --hairline: rgba(245, 245, 247, 0.12);
     --hover: rgba(245, 245, 247, 0.08);
+    --toolbar-surface: #26262a;
+    --strip-surface: #1d1d1f;
+    --field: #1d1d1f;
   }
 }
 
@@ -43,7 +53,9 @@ body {
   user-select: none;
 }
 
-body.panel-open {
+/* The chrome webview covers the window whenever a panel or overlay is
+   open; only its top chrome stack may paint. */
+body.chrome-expanded {
   background: transparent;
 }
 

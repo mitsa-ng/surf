@@ -1,16 +1,32 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { ui } from "../ui.svelte";
   import { tabs } from "../tabs.svelte";
-  import { findInPage } from "../ipc";
+  import { findInPage, onFindCount } from "../ipc";
+  import Icon from "./Icon.svelte";
 
   let query = $state("");
   let inputEl: HTMLInputElement | undefined = $state();
+  // The live match count comes from the content webview itself; it resets
+  // with every new query and hides when the bar is empty (an honest 0 is
+  // shown when the page has no matches).
+  let count = $state<number | null>(null);
 
   $effect(() => {
     if (ui.findOpen) {
       query = "";
+      count = null;
       setTimeout(() => inputEl?.focus(), 0);
     }
+  });
+
+  onMount(() => {
+    const unlisten = onFindCount((tab, n) => {
+      if (tab === tabs.activeId) count = n;
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
   });
 
   function find(backward: boolean) {
@@ -30,6 +46,7 @@
   }
 
   function onInput() {
+    count = null;
     find(false);
   }
 </script>
@@ -46,35 +63,44 @@
       aria-label="搜尋文字"
       spellcheck="false"
     />
-    <button onclick={() => find(true)} aria-label="上一個符合" title="上一個（Shift+Enter）">↑</button>
-    <button onclick={() => find(false)} aria-label="下一個符合" title="下一個（Enter）">↓</button>
-    <button class="close" onclick={() => (ui.findOpen = false)} aria-label="關閉搜尋">✕</button>
+    {#if query.trim()}
+      <span class="count" role="status" aria-live="polite">{count === null ? "…" : String(count)}</span>
+    {/if}
+    <button onclick={() => find(true)} aria-label="上一個符合" title="上一個（Shift+Enter）">
+      <Icon name="chevronUp" />
+    </button>
+    <button onclick={() => find(false)} aria-label="下一個符合" title="下一個（Enter）">
+      <Icon name="chevronDown" />
+    </button>
+    <button class="close" onclick={() => (ui.findOpen = false)} aria-label="關閉搜尋" title="關閉（Esc）">
+      <Icon name="close" />
+    </button>
   </div>
 {/if}
 
 <style>
   .find-bar {
     position: absolute;
-    top: 44px;
+    /* Chrome floats the find bar under the omnibox, clear of the page. */
+    top: 91px;
     right: 12px;
     z-index: 5;
     display: flex;
     align-items: center;
     gap: 2px;
-    height: 32px;
-    padding: 0 4px;
-    background: var(--panel);
-    border: 1px solid var(--hairline);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    height: 36px;
+    padding: 0 5px;
+    background: var(--toolbar-surface);
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   }
   input {
-    width: 180px;
+    width: 200px;
     height: 26px;
     padding: 0 8px;
     border: 1px solid var(--hairline);
     border-radius: 6px;
-    background: var(--bg);
+    background: var(--field);
     color: var(--text);
     font: inherit;
     font-size: 12px;
@@ -83,12 +109,20 @@
     outline: none;
     border-color: var(--accent);
   }
+  .count {
+    min-width: 24px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
   button {
+    display: grid;
+    place-items: center;
     width: 26px;
     height: 26px;
     border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 12px;
   }
   button:hover {
     background: var(--hover);

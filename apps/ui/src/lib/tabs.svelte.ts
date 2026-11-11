@@ -102,3 +102,13 @@ export async function historyAction(action: "back" | "forward" | "reload") {
     console.error(String(e));
   }
 }
+
+export async function stopLoading() {
+  const id = tabs.activeId;
+  if (id === null) return;
+  try {
+    await ipc.tabStop(id);
+  } catch (e) {
+    console.error(String(e));
+  }
+}

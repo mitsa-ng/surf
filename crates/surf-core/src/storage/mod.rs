@@ -104,6 +104,8 @@ impl Db {
                 loading: false,
                 incognito: false,
                 pinned: pinned != 0,
+                can_back: false,
+                can_forward: false,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -210,8 +212,10 @@ mod tests {
             loading: false,
             incognito: false,
             pinned: false,
+            can_back: false,
+            can_forward: false,
         };
-        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false, pinned: false };
+        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false, pinned: false, can_back: false, can_forward: false };
         db.save_tab(0, &t1).unwrap();
         db.save_tab(1, &t2).unwrap();
         let mut t3 = TabState {
@@ -221,6 +225,8 @@ mod tests {
             loading: false,
             incognito: false,
             pinned: true,
+            can_back: false,
+            can_forward: false,
         };
         db.save_tab(2, &t3).unwrap();
         db.delete_tab(TabId(2)).unwrap();

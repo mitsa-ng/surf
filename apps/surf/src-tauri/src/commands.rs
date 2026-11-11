@@ -1,5 +1,5 @@
 use surf_core::tabs::TabId;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::{self, BrowserState, TabsSnapshot};
 use crate::tabview::TabView;
@@ -142,7 +142,14 @@ pub fn tab_navigate(app: AppHandle, id: u64, input: String) -> Result<TabsSnapsh
 pub fn tab_back(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
     #[cfg(desktop)]
     {
-        crate::manager::eval_history(&app, TabId(id), "history.back()")?;
+        // The journal cursor moves first; the eval then lands on the
+        // stepped-to entry, which the on_navigation hook confirms.
+        let state = app.state::<BrowserState>();
+        let allowed = state::lock(&state.model).history_back(TabId(id));
+        if allowed {
+            crate::manager::eval_history(&app, TabId(id), "history.back()")?;
+            crate::manager::emit_tabs(&app);
+        }
     }
     #[cfg(mobile)]
     {
@@ -157,7 +164,12 @@ pub fn tab_back(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
 pub fn tab_forward(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
     #[cfg(desktop)]
     {
-        crate::manager::eval_history(&app, TabId(id), "history.forward()")?;
+        let state = app.state::<BrowserState>();
+        let allowed = state::lock(&state.model).history_forward(TabId(id));
+        if allowed {
+            crate::manager::eval_history(&app, TabId(id), "history.forward()")?;
+            crate::manager::emit_tabs(&app);
+        }
     }
     #[cfg(mobile)]
     {
@@ -181,6 +193,30 @@ pub fn tab_reload(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
         let _ = (&app, &id);
     }
     Ok(())
+}
+
+/// Stop an in-flight page load; the toolbar swaps reload for stop while
+/// `loading`, mirroring Chrome.
+#[tauri::command]
+pub fn tab_stop(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
+    #[cfg(desktop)]
+    {
+        crate::manager::eval_history(&app, TabId(id), "window.stop()")?;
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (&app, &id);
+    }
+    Ok(())
+}
+
+/// The chrome UI takes the cold-start deep link once its tab model is
+/// ready; take-and-clear so the URL is never applied twice.
+#[tauri::command]
+pub fn deeplink_take(app: AppHandle) -> Result<Option<String>, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let queued = state::lock(&state.launch_deeplink).take();
+    Ok(queued)
 }
 
 #[tauri::command]
@@ -479,6 +515,52 @@ pub fn cs_send(
 ) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     let id = require_caller_tab(&webview, &state, &token)?;
+    // Browser-internal reports bypass the extension router entirely.
+    if name == "find://count" {
+        let count = payload.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let _ = app.emit_to(crate::layout::CHROME_LABEL, "find://count", serde_json::json!({ "tab": id.0, "count": count }));
+        return Ok(());
+    }
+    // New-tab page: submit the central search box through the normal
+    // navigation pipeline (search terms resolve via the omnibox rules).
+    if name == "ntp://search" {
+        let q = payload.get("q").and_then(|v| v.as_str()).unwrap_or("").trim().to_owned();
+        if !q.is_empty() {
+            #[cfg(desktop)]
+            crate::manager::navigate(&app, id, &q)?;
+            #[cfg(mobile)]
+            crate::manager::navigate_mobile(&app, id, &q).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        }
+        return Ok(());
+    }
+    // New-tab page: answer with the most visited domains as shortcut
+    // tiles, straight from real history rows.
+    if name == "ntp://ready" {
+        #[cfg(desktop)]
+        {
+            let rows = state::lock(&state.db)
+                .history_recent(60)
+                .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+            let mut seen = std::collections::HashSet::new();
+            let sites: Vec<serde_json::Value> = rows
+                .iter()
+                .filter_map(|(url, title, _)| {
+                    let host = url.host_str()?;
+                    if host.starts_with("localhost") || !seen.insert(host.to_owned()) {
+                        return None;
+                    }
+                    Some(serde_json::json!({
+                        "host": host,
+                        "url": url.as_str(),
+                        "title": title.clone().unwrap_or_else(|| host.to_owned()),
+                    }))
+                })
+                .take(6)
+                .collect();
+            crate::content_bridge::send_to_tab(&app, id, "ntp://sites", &serde_json::json!({ "sites": sites }));
+        }
+        return Ok(());
+    }
     let to = match ext {
         Some(e) => surf_ext_host::router::Endpoint::Extension(surf_ext_host::ExtensionId(e)),
         None => surf_ext_host::router::Endpoint::Host,
@@ -595,6 +677,7 @@ const FIND_SCRIPT: &str = r#"(function (q, back) {
     }
   }
   var sel = window.getSelection();
+  if (window.__surf && window.__surf.send) window.__surf.send("find://count", { count: matches.length });
   if (!matches.length) { sel.removeAllRanges(); return; }
   if (back) s.idx = s.idx <= 0 ? matches.length - 1 : s.idx - 1;
   else s.idx = (s.idx + 1) % matches.length;

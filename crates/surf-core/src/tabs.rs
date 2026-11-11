@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,13 @@ pub struct TabState {
     /// tab-strip close button.
     #[serde(default)]
     pub pinned: bool,
+    /// Webview history journal state, mirrored to the UI for the disabled
+    /// back/forward buttons. Restored tabs start at false: the session
+    /// restore reloads one URL, so there is genuinely nothing behind it.
+    #[serde(default)]
+    pub can_back: bool,
+    #[serde(default)]
+    pub can_forward: bool,
 }
 
 /// Rust-side source of truth for the tab list. The UI layer never derives
@@ -35,6 +43,41 @@ pub struct TabModel {
     tabs: Vec<TabState>,
     active: Option<TabId>,
     next_id: u64,
+    /// Per-tab navigation journal. Tauri does not expose the webview's
+    /// own back/forward availability, so committed navigations are
+    /// journalled here and the index tracks the optimistic back/forward
+    /// steps the UI commands take.
+    history: HashMap<TabId, TabJournal>,
+}
+
+#[derive(Debug, Default)]
+struct TabJournal {
+    entries: Vec<Url>,
+    index: usize,
+}
+
+impl TabJournal {
+    /// Fold a committed navigation into the journal: same entry means a
+    /// reload or the confirmation of a step we already counted; the entry
+    /// after the cursor means forward; anything else is a new navigation
+    /// that truncates the forward stack, like a webview would.
+    fn record(&mut self, url: Url) -> (bool, bool) {
+        if self.entries.get(self.index) == Some(&url) {
+            return self.flags();
+        }
+        if self.entries.get(self.index + 1) == Some(&url) {
+            self.index += 1;
+            return self.flags();
+        }
+        self.entries.truncate(self.index + 1);
+        self.entries.push(url);
+        self.index = self.entries.len() - 1;
+        self.flags()
+    }
+
+    fn flags(&self) -> (bool, bool) {
+        (self.index > 0, self.index + 1 < self.entries.len())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,7 +103,16 @@ impl TabModel {
     fn open_with(&mut self, url: Option<Url>, incognito: bool) -> TabId {
         self.next_id += 1;
         let id = TabId(self.next_id);
-        let tab = TabState { id, url: url.clone(), title: None, loading: url.is_some(), incognito, pinned: false };
+        let tab = TabState {
+            id,
+            url: url.clone(),
+            title: None,
+            loading: url.is_some(),
+            incognito,
+            pinned: false,
+            can_back: false,
+            can_forward: false,
+        };
         self.tabs.push(tab);
         self.active = Some(id);
         id
@@ -90,6 +142,7 @@ impl TabModel {
     pub fn close(&mut self, id: TabId) -> Option<ClosedTab> {
         let idx = self.tabs.iter().position(|t| t.id == id)?;
         self.tabs.remove(idx);
+        self.history.remove(&id);
         if self.active == Some(id) {
             // Prefer the tab that slid into the closed slot, else the left neighbour.
             self.active = self.tabs.get(idx).map(|t| t.id).or_else(|| self.tabs.get(idx.saturating_sub(1)).map(|t| t.id));
@@ -116,6 +169,55 @@ impl TabModel {
 
     pub fn set_loading(&mut self, id: TabId, loading: bool) -> bool {
         self.mut_tab(id).map(|t| t.loading = loading).is_some()
+    }
+
+    /// Fold a committed navigation into the tab's history journal and
+    /// refresh the mirrored back/forward flags. Returns whether any
+    /// mirrored flag changed, so callers can skip redundant snapshots;
+    /// `false` covers unknown tabs too.
+    pub fn record_navigation(&mut self, id: TabId, url: Url) -> bool {
+        let flags = {
+            let journal = self.history.entry(id).or_default();
+            journal.record(url)
+        };
+        self.apply_flags(id, flags).unwrap_or(false)
+    }
+
+    /// Step back through the journal (the UI command already decided to
+    /// navigate; this moves the cursor optimistically and reports whether
+    /// there was anywhere to go).
+    pub fn history_back(&mut self, id: TabId) -> bool {
+        let Some(journal) = self.history.get_mut(&id) else { return false };
+        if journal.index == 0 {
+            return false;
+        }
+        journal.index -= 1;
+        let flags = journal.flags();
+        self.apply_flags(id, flags);
+        true
+    }
+
+    /// Step forward through the journal; see `history_back`.
+    pub fn history_forward(&mut self, id: TabId) -> bool {
+        let Some(journal) = self.history.get_mut(&id) else { return false };
+        if journal.index + 1 >= journal.entries.len() {
+            return false;
+        }
+        journal.index += 1;
+        let flags = journal.flags();
+        self.apply_flags(id, flags);
+        true
+    }
+
+    /// Write the journal flags into the tab state; `Some(changed)` says
+    /// whether the mirrored booleans moved, `None` means unknown tab.
+    fn apply_flags(&mut self, id: TabId, (back, forward): (bool, bool)) -> Option<bool> {
+        self.mut_tab(id).map(|t| {
+            let changed = t.can_back != back || t.can_forward != forward;
+            t.can_back = back;
+            t.can_forward = forward;
+            changed
+        })
     }
 
     pub fn active_id(&self) -> Option<TabId> {
@@ -153,6 +255,44 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn journal_tracks_back_forward_and_truncation() {
+        let mut model = TabModel::new();
+        let id = model.open(None);
+        // Returns whether a mirrored flag changed.
+        let nav = |m: &mut TabModel, u: &str| m.record_navigation(id, url(u));
+        // Fresh webview loads its start page: nothing behind or ahead.
+        assert!(!nav(&mut model, "surf://start"));
+        assert!(!model.get(id).unwrap().can_back);
+        assert!(!model.get(id).unwrap().can_forward);
+        // Two committed navigations enable back.
+        assert!(nav(&mut model, "https://a.example/"));
+        assert!(model.get(id).unwrap().can_back);
+        assert!(!model.get(id).unwrap().can_forward);
+        assert!(!nav(&mut model, "https://b.example/"));
+        // Optimistic back keeps back (the start page is still behind) and
+        // re-enables forward.
+        assert!(model.history_back(id));
+        assert!(model.get(id).unwrap().can_back);
+        assert!(model.get(id).unwrap().can_forward);
+        // The confirming navigation for the stepped-to entry is a no-op.
+        assert!(!nav(&mut model, "https://a.example/"));
+        // Back to the root, then a brand-new navigation truncates forward.
+        assert!(model.history_back(id));
+        assert!(!model.get(id).unwrap().can_back);
+        assert!(model.history_forward(id));
+        assert!(nav(&mut model, "https://c.example/"));
+        assert!(model.get(id).unwrap().can_back);
+        assert!(!model.get(id).unwrap().can_forward);
+        // Back at the journal root is refused.
+        assert!(model.history_back(id));
+        assert!(model.history_back(id));
+        assert!(!model.history_back(id));
+        // Closing the tab drops its journal.
+        model.close(id);
+        assert!(!model.history_forward(id));
     }
 
     #[test]

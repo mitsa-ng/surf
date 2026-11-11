@@ -4,8 +4,12 @@ use tauri::{AppHandle, Manager, Window, Wry};
 
 use crate::state::{self, BrowserState};
 
-/// The chrome webview is 36px of tabs plus 44px of toolbar.
-pub const CHROME_HEIGHT_LOGICAL: f64 = 80.0;
+/// Chrome-parity chrome stack: 40px of tabs plus a 47px toolbar. The
+/// extra toolbar room is the omnibox's breathing space (6px above, 7px
+/// below the 34px field), measured off Chrome on macOS.
+pub const TAB_STRIP_HEIGHT_LOGICAL: f64 = 40.0;
+pub const TOOLBAR_HEIGHT_LOGICAL: f64 = 47.0;
+pub const CHROME_HEIGHT_LOGICAL: f64 = TAB_STRIP_HEIGHT_LOGICAL + TOOLBAR_HEIGHT_LOGICAL;
 /// The optional bookmarks bar row below the toolbar.
 pub const BOOKMARKS_BAR_HEIGHT_LOGICAL: f64 = 28.0;
 

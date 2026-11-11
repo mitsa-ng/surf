@@ -62,6 +62,8 @@ pub fn run() {
             commands::tab_back,
             commands::tab_forward,
             commands::tab_reload,
+            commands::tab_stop,
+            commands::deeplink_take,
             commands::filter_capabilities,
             commands::extensions_list,
             commands::extension_install,

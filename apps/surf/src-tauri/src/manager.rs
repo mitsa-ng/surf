@@ -24,6 +24,39 @@ pub fn emit_tabs(app: &AppHandle) {
     let _ = app.emit_to("chrome", TABS_EVENT, &snapshot);
 }
 
+/// Journal a committed navigation into the model and refresh the
+/// mirrored back/forward flags; only a flag change re-broadcasts.
+#[cfg(desktop)]
+fn record_navigation(app: &AppHandle, id: TabId, url: &Url) {
+    let changed = {
+        let state = app.state::<BrowserState>();
+        // The model guard must drop before emit_tabs re-locks the model.
+        let changed = state::lock(&state.model).record_navigation(id, url.clone());
+        changed
+    };
+    if changed {
+        emit_tabs(app);
+    }
+}
+
+/// A load that never reaches Finished would spin the tab dot forever
+/// (wry/tauri expose no failure signal, so DNS deaths and blocked frames
+/// leave `loading` stuck); clear the flag after 15 seconds as the honest
+/// approximation of a failed load.
+#[cfg(desktop)]
+fn arm_loading_watchdog(app: &AppHandle, id: TabId) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(15));
+        let state = handle.state::<BrowserState>();
+        let still = state::lock(&state.model).get(id).map(|t| t.loading).unwrap_or(false);
+        if still {
+            state::lock(&state.model).set_loading(id, false);
+            emit_tabs(&handle);
+        }
+    });
+}
+
 /// Create a tab. Desktop attaches a content webview; mobile records the
 /// model entry only (webview-per-tab lands in M2).
 pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabId {
@@ -99,28 +132,29 @@ fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool)
             if let Some(u) = &url {
                 model.set_url(id, u.clone());
             }
-        } else {
-            model.set_loading(id, false);
-            if let Some(u) = &url {
-                model.set_url(id, u.clone());
-                if u.scheme() == "http" || u.scheme() == "https" {
-                    if let Some(host) = u.host_str() {
-                        model.set_title(id, host.to_owned());
-                    }
-                    // Private tabs leave no history.
-                    let private = model.get(id).map(|t| t.incognito).unwrap_or(false);
-                    if !private {
-                        let _ = state::lock(&state.db).record_visit(u, None);
-                    }
+            drop(model);
+            arm_loading_watchdog(app, id);
+            emit_tabs(app);
+            return;
+        }
+        model.set_loading(id, false);
+        if let Some(u) = &url {
+            model.set_url(id, u.clone());
+            if u.scheme() == "http" || u.scheme() == "https" {
+                if let Some(host) = u.host_str() {
+                    model.set_title(id, host.to_owned());
+                }
+                // Private tabs leave no history.
+                let private = model.get(id).map(|t| t.incognito).unwrap_or(false);
+                if !private {
+                    let _ = state::lock(&state.db).record_visit(u, None);
                 }
             }
         }
     }
     // WKContentRuleList installs must wait for the first finished load
     // (the controller's proxy is null before the page initializes).
-    if !started {
-        crate::filters::tab_loaded(app, id);
-    }
+    crate::filters::tab_loaded(app, id);
     emit_tabs(app);
 }
 
@@ -185,7 +219,13 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                 _ => true,
             }
         })
-        .on_navigation(move |url| nav_verdict(&app_handle_nav, nav_tab, url))
+        .on_navigation(move |url| {
+            let allow = nav_verdict(&app_handle_nav, nav_tab, url);
+            if allow {
+                record_navigation(&app_handle_nav, nav_tab, url);
+            }
+            allow
+        })
         .on_page_load(move |_wv, payload| {
             let url = Some(payload.url().clone());
             let started = payload.event() == tauri::webview::PageLoadEvent::Started;
@@ -203,6 +243,11 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
             state::lock(&state.webviews).insert(id, view);
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             crate::filters::apply_filters(app, id);
+            // Attach-time loads (restored tabs, deep-linked opens) skip
+            // navigate(), so the loading watchdog must arm here too.
+            if url.is_some() {
+                arm_loading_watchdog(app, id);
+            }
             let _ = crate::layout::relayout_window(window);
             // A fresh tab means the user types next: keyboard focus belongs
             // to the chrome (address bar), not the page.
@@ -276,6 +321,7 @@ pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::Co
     if let Some(view) = state::content_webview(app, id) {
         let _ = view.load(&target);
     }
+    arm_loading_watchdog(app, id);
     emit_tabs(app);
     Ok(())
 }

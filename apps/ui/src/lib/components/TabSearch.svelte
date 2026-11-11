@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ui } from "../ui.svelte";
   import { tabs, activateTab } from "../tabs.svelte";
+  import Favicon from "./Favicon.svelte";
 
   let filter = $state("");
   let inputEl: HTMLInputElement | undefined = $state();
@@ -55,8 +56,11 @@
             onclick={() => pick(t.id)}
             title={t.url ?? ""}
           >
-            <span class="title">{t.title || t.url || "新分頁"}</span>
-            <span class="url">{t.url ?? ""}</span>
+            <Favicon url={t.url} size={16} />
+            <span class="text">
+              <span class="title">{t.title || t.url || "新分頁"}</span>
+              <span class="url">{t.url ?? ""}</span>
+            </span>
           </button>
         </li>
       {:else}
@@ -74,23 +78,23 @@
   }
   .tab-search {
     position: fixed;
-    top: 8px;
-    right: 12px;
+    /* Anchored under the strip's tab-search button, like Chrome. */
+    top: 44px;
+    left: 92px;
     z-index: 4;
-    width: min(320px, 80vw);
+    width: min(360px, 80vw);
     padding: 6px;
-    background: var(--panel);
-    border: 1px solid var(--hairline);
-    border-radius: 8px;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+    background: var(--toolbar-surface);
+    border-radius: 12px;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.2);
   }
   input {
     width: 100%;
-    height: 30px;
+    height: 32px;
     padding: 0 10px;
     border: 1px solid var(--hairline);
-    border-radius: 6px;
-    background: var(--bg);
+    border-radius: 8px;
+    background: var(--field);
     color: var(--text);
     font: inherit;
     font-size: 13px;
@@ -103,18 +107,17 @@
     list-style: none;
     margin: 6px 0 0;
     padding: 0;
-    max-height: 260px;
+    max-height: 280px;
     overflow-y: auto;
   }
   button {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
+    align-items: center;
+    gap: 8px;
     width: 100%;
     min-height: 44px;
     padding: 5px 10px;
-    border-radius: 6px;
+    border-radius: 8px;
     text-align: left;
   }
   button:hover {
@@ -122,6 +125,14 @@
   }
   button.active .title {
     color: var(--accent);
+  }
+  .text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
   }
   .title {
     font-size: 13px;
