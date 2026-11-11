@@ -85,3 +85,5 @@ export const onTabsChanged = (handler: (snapshot: TabsSnapshot) => void): Promis
 export const syncExport = () => invoke<string>("sync_export");
 
 export const syncImport = (path: string) => invoke<string>("sync_import", { path });
+
+export const panelSetOpen = (open: boolean) => invoke<void>("panel_set_open", { open });

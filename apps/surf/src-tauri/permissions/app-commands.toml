@@ -26,4 +26,5 @@ commands.allow = [
     "settings_set",
     "rules_get",
     "rules_set",
+    "panel_set_open",
 ]

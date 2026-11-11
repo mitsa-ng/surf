@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use surf_core::storage::Db;
@@ -23,6 +24,7 @@ pub struct TabsSnapshot {
 }
 
 pub struct BrowserState {
+    pub panel_open: AtomicBool,
     pub model: Mutex<TabModel>,
     pub db: Arc<Mutex<Db>>,
     pub registry: Mutex<Registry>,
@@ -44,6 +46,7 @@ pub struct BrowserState {
 impl BrowserState {
     pub fn new(db: Db) -> Self {
         Self {
+            panel_open: AtomicBool::new(false),
             model: Mutex::new(TabModel::new()),
             db: Arc::new(Mutex::new(db)),
             registry: Mutex::new(Registry::new()),
@@ -75,22 +78,30 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(desktop)]
     {
-        let window = WindowBuilder::new(app, MAIN_LABEL)
+        let builder = WindowBuilder::new(app, MAIN_LABEL);
+        #[cfg(target_os = "macos")]
+        // Keep child WebViews below the native title bar.
+        let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
+        let window = builder
             .title("Surf")
             .inner_size(1200.0, 800.0)
             .min_inner_size(480.0, 480.0)
             .build()?;
 
-        let scale = window.scale_factor().unwrap_or(1.0);
-        let size = window.inner_size()?;
-        let offset = layout::titlebar_offset(&window);
-        let chrome = window.add_child(
-            tauri::webview::WebviewBuilder::new("chrome", tauri::WebviewUrl::App("index.html".into()))
-                .focused(true),
-            tauri::LogicalPosition::new(0.0, offset),
-            tauri::LogicalSize::new(size.width as f64 / scale, layout::CHROME_HEIGHT),
-        )?;
-        drop(chrome);
+        {
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let size = window.inner_size()?;
+            let logical_size = size.to_logical::<f64>(scale);
+            let chrome_h = layout::CHROME_HEIGHT_LOGICAL;
+            let chrome = window.add_child(
+                tauri::webview::WebviewBuilder::new("chrome", tauri::WebviewUrl::App("index.html".into()))
+                    .transparent(true)
+                    .focused(true),
+                tauri::LogicalPosition::new(0.0, 0.0),
+                tauri::LogicalSize::new(logical_size.width, chrome_h),
+            )?;
+            drop(chrome);
+        }
 
         restore_session(&handle);
         watch_resize(&handle, &window);
@@ -341,10 +352,21 @@ fn restore_session(app: &AppHandle) {
 #[cfg(desktop)]
 fn watch_resize(app: &AppHandle, window: &Window<Wry>) {
     let handle = app.clone();
-    window.on_window_event(move |event| {
-        if let tauri::WindowEvent::Resized(_) = event {
+    let win = window.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Resized(_) => {
             let _ = layout::relayout(&handle);
         }
+        // Moving between displays with different scale factors changes
+        // every physical geometry; recompute with the new scale.
+        tauri::WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+            let _ = new_inner_size;
+            let _ = layout::relayout_window(&win);
+        }
+        tauri::WindowEvent::Moved(_) => {
+            let _ = layout::relayout(&handle);
+        }
+        _ => {}
     });
 }
 

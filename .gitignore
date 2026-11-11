@@ -3,6 +3,7 @@ dist/
 target/
 .DS_Store
 *.log
+*.bak-*
 apps/surf/src-tauri/gen/android/.gradle/
 apps/surf/src-tauri/gen/android/app/build/
 apps/surf/src-tauri/gen/android/build/

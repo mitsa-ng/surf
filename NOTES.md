@@ -23,8 +23,19 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 ## 進度
 
+### 本次目標：修復桌面工具列被瀏覽區域遮擋
+
+- [x] macOS 使用不延伸到標題列下方的視窗內容區，避免 child WebView 座標與可視區錯位。
+- [x] Chrome 固定 80 logical px；頁面從 y=80 開始，初始載入、resize 與新分頁使用同一套幾何。
+- [x] Vite 將 `start.html` 獨立打包，空白分頁不再載入完整瀏覽器 UI。
+- [x] Retina app 畫面確認工具列完整可見；網址列可點選並取得焦點。
+
 | 日期 | 事項 |
 |---|---|
+| 2026-11-11 | 修復設定持久化：點選搜尋引擎直接寫入 SQLite，修正回讀字串型別；release app 實測 Google 重啟後讀回，並恢復 DuckDuckGo；封鎖清單讀取成功後才可儲存 |
+| 2026-11-11 | 分離桌面設定與擴充功能面板；設定頁僅保留搜尋、同步、封鎖規則，擴充按鈕開啟獨立安裝／管理頁；release app 畫面與無障礙樹驗收通過 |
+| 2026-11-11 | 修復桌面浮動面板被瀏覽 WebView 遮擋：面板開啟時擴展透明 chrome、提升原生層級；release app 畫面確認面板完整浮在內容上方，關閉後恢復工具列與瀏覽區 |
+| 2026-11-11 | 修復桌面工具列遮擋：macOS 改用 `TitleBarStyle::Transparent`，讓 WebView 座標原點從原生標題列下方開始；保留 80px chrome 與獨立 `start.html`；release app 畫面及網址列點擊驗收通過 |
 | 2026-11-10 | M1：骨架＋桌面垂直切片＋mobile build 產出 |
 | 2026-11-11 | M2：extension engine 端到端驗證（banner/hits=1/popup）；ACL 關鍵修復（見下）；mobile tab model 雙平台驗證 |
 | 2026-11-11 | 修復：rquickjs promise pump、api bridge 位置、grant race、deep-link config 格式、viewport-fit=cover、iOS dvh |

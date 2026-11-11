@@ -148,6 +148,7 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
                 let _ = view.hide();
             }
             state::lock(&state.webviews).insert(id, view);
+            let _ = crate::layout::relayout_window(window);
             // A fresh tab means the user types next: keyboard focus belongs
             // to the chrome (address bar), not the page.
             if let Some(chrome) = app.get_webview(crate::layout::CHROME_LABEL) {

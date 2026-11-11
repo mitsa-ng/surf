@@ -43,6 +43,10 @@ body {
   user-select: none;
 }
 
+body.panel-open {
+  background: transparent;
+}
+
 #app {
   height: 100vh;
 }

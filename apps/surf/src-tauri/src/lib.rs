@@ -75,6 +75,7 @@ pub fn run() {
             commands::rules_set,
             commands::sync_export,
             commands::sync_import,
+            layout::panel_set_open,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");

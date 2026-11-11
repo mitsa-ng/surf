@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
-  import { initUi, togglePanel } from "./lib/ui.svelte";
+  import { initUi, togglePanel, ui } from "./lib/ui.svelte";
+  import { panelSetOpen } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
@@ -13,6 +14,13 @@
   const isMobile = isMobileDevice();
   let toolbar: Toolbar | undefined = $state();
   const activeUrl = $derived(tabs.list.find((t) => t.id === tabs.activeId)?.url ?? null);
+
+  $effect(() => {
+    if (isMobile) return;
+    const open = ui.panel !== null;
+    document.body.classList.toggle("panel-open", open);
+    void panelSetOpen(open).catch((error) => console.error(String(error)));
+  });
 
   onMount(() => {
     void init();
