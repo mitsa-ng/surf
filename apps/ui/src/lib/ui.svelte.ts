@@ -10,6 +10,8 @@ export const ui = $state<{
   installNotice: string;
   installPath: string;
   pendingInstall: null | { id: string; name: string; version: string; permissions: string[] };
+  /** Desktop bookmarks bar visibility; mirrors the persisted setting. */
+  bookmarksBar: boolean;
 }>({
   panel: null,
   extensions: [],
@@ -19,6 +21,7 @@ export const ui = $state<{
   installNotice: "",
   installPath: "",
   pendingInstall: null,
+  bookmarksBar: false,
 });
 
 let started = false;
@@ -30,7 +33,22 @@ const GRANTABLE_APIS = ["storage", "tabs", "bookmarks", "alarms", "fetch"];
 export async function initUi() {
   if (started) return;
   started = true;
-  await Promise.all([refreshExtensions(), refreshBookmarks()]);
+  await Promise.all([
+    refreshExtensions(),
+    refreshBookmarks(),
+    // The Rust side already applied the persisted flag at setup; this
+    // only mirrors it in the UI so the header renders the right height.
+    ipc
+      .settingsGet("bookmarks_bar")
+      .then((v) => (ui.bookmarksBar = v !== null && v !== ""))
+      .catch(() => {}),
+  ]);
+}
+
+/** Cmd/Ctrl+Shift+B: toggle the desktop bookmarks bar. */
+export function toggleBookmarksBar() {
+  ui.bookmarksBar = !ui.bookmarksBar;
+  void ipc.bookmarksBarSetOpen(ui.bookmarksBar).catch((e) => console.error(String(e)));
 }
 
 export async function refreshExtensions() {

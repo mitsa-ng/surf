@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
-  import { initUi, togglePanel, ui } from "./lib/ui.svelte";
+  import { initUi, toggleBookmarksBar, togglePanel, ui } from "./lib/ui.svelte";
   import { panelSetOpen } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
+  import BookmarksBar from "./lib/components/BookmarksBar.svelte";
   import BottomBar from "./lib/components/BottomBar.svelte";
   import TabSheet from "./lib/components/TabSheet.svelte";
   import Panel from "./lib/components/Panel.svelte";
@@ -83,6 +84,9 @@
     } else if (e.key === "w" && tabs.activeId !== null) {
       e.preventDefault();
       void closeTab(tabs.activeId);
+    } else if (e.shiftKey && e.key.toLowerCase() === "b") {
+      e.preventDefault();
+      toggleBookmarksBar();
     }
   }
 </script>
@@ -108,9 +112,12 @@
     <BottomBar />
   </main>
 {:else}
-  <header>
+  <header style:height={`${80 + (ui.bookmarksBar ? 28 : 0)}px`}>
     <TabStrip />
     <Toolbar bind:this={toolbar} />
+    {#if ui.bookmarksBar}
+      <BookmarksBar />
+    {/if}
   </header>
   <Panel />
   <!-- Content webviews are native children positioned below this chrome;
@@ -121,7 +128,6 @@
   header {
     position: fixed;
     inset: 0 0 auto 0;
-    height: 80px;
     background: var(--panel);
   }
   .mobile {

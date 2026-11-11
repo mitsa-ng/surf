@@ -6,8 +6,21 @@ use crate::state::{self, BrowserState};
 
 /// The chrome webview is 36px of tabs plus 44px of toolbar.
 pub const CHROME_HEIGHT_LOGICAL: f64 = 80.0;
+/// The optional bookmarks bar row below the toolbar.
+pub const BOOKMARKS_BAR_HEIGHT_LOGICAL: f64 = 28.0;
 
 pub const CHROME_LABEL: &str = "chrome";
+
+/// Total chrome height: toolbar stack plus the bookmarks bar when it is
+/// visible. The UI header must render exactly this height.
+pub fn chrome_height(state: &BrowserState) -> f64 {
+    let bar = if cfg!(desktop) && state.bookmarks_bar.load(Ordering::Relaxed) {
+        BOOKMARKS_BAR_HEIGHT_LOGICAL
+    } else {
+        0.0
+    };
+    CHROME_HEIGHT_LOGICAL + bar
+}
 
 #[cfg(desktop)]
 pub fn relayout(app: &AppHandle) -> Result<(), tauri::Error> {
@@ -25,7 +38,7 @@ pub fn relayout_window(window: &Window<Wry>) -> Result<(), tauri::Error> {
     let logical_size = size.to_logical::<f64>(scale);
     let state = app.state::<BrowserState>();
     let panel_open = state.panel_open.load(Ordering::Relaxed);
-    let chrome_h = if panel_open { logical_size.height } else { CHROME_HEIGHT_LOGICAL };
+    let chrome_h = if panel_open { logical_size.height } else { chrome_height(&state) };
 
     let chrome = app.get_webview(CHROME_LABEL);
     if let Some(chrome) = &chrome {
@@ -34,7 +47,7 @@ pub fn relayout_window(window: &Window<Wry>) -> Result<(), tauri::Error> {
     }
 
     let ids: Vec<TabId> = state::lock(&state.webviews).keys().copied().collect();
-    let content_top = CHROME_HEIGHT_LOGICAL;
+    let content_top = chrome_height(&state);
     let content_height = (logical_size.height - content_top).max(0.0);
     for id in ids {
         if let Some(view) = state::content_webview(app, id) {
@@ -66,6 +79,29 @@ pub fn panel_set_open(app: AppHandle, open: bool) -> Result<(), String> {
     }
 }
 
+/// Toggle the desktop bookmarks bar: persist the choice, update the
+/// chrome height, and reposition the content webviews.
+#[tauri::command]
+pub fn bookmarks_bar_set_open(app: AppHandle, open: bool) -> Result<(), String> {
+    let state = app.state::<BrowserState>();
+    state.bookmarks_bar.store(open, Ordering::Relaxed);
+    {
+        let db = state::lock(&state.db);
+        let value = if open { "1" } else { "" };
+        if let Err(e) = db.ext_kv_set("sys", "setting:bookmarks_bar", value) {
+            return Err(e.to_string());
+        }
+    }
+    #[cfg(desktop)]
+    {
+        relayout(&app).map_err(|error| error.to_string())
+    }
+    #[cfg(mobile)]
+    {
+        Ok(())
+    }
+}
+
 /// Geometry for a freshly created content webview, so it lands correctly
 /// before the first resize event.
 #[cfg(desktop)]
@@ -75,8 +111,8 @@ pub fn content_rect(
     let scale = window.scale_factor().unwrap_or(1.0);
     let size = window.inner_size().unwrap_or_default();
     let logical_size = size.to_logical::<f64>(scale);
-    let chrome_h = CHROME_HEIGHT_LOGICAL;
-    let content_top = chrome_h;
+    let state = window.app_handle().state::<BrowserState>();
+    let content_top = chrome_height(&state);
     let height = (logical_size.height - content_top).max(0.0);
     (
         tauri::LogicalPosition::new(0.0, content_top),

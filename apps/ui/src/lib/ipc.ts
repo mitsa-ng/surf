@@ -93,3 +93,9 @@ export const syncAutoGet = () => invoke<string | null>("sync_auto_get");
 export const syncAutoSet = (path: string | null) => invoke<string | null>("sync_auto_set", { path });
 
 export const pickSyncFile = () => invoke<string | null>("pick_sync_file");
+
+export const historyClear = () => invoke<number>("history_clear");
+
+export const bookmarksBarSetOpen = (open: boolean) => invoke<void>("bookmarks_bar_set_open", { open });
+
+export const settingsGet = (key: string) => invoke<string | null>("settings_get", { key });

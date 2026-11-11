@@ -22,6 +22,8 @@ commands.allow = [
     "bookmarks_add",
     "bookmarks_remove",
     "history_recent",
+    "history_clear",
+    "bookmarks_bar_set_open",
     "settings_get",
     "settings_set",
     "rules_get",

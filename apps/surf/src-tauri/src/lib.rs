@@ -83,6 +83,8 @@ pub fn run() {
             commands::sync_auto_set,
             commands::pick_sync_file,
             layout::panel_set_open,
+            layout::bookmarks_bar_set_open,
+            commands::history_clear,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");

@@ -112,6 +112,11 @@ impl Db {
         Ok(())
     }
 
+    /// Delete every history row; returns the number of rows removed.
+    pub fn clear_history(&self) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM history", [])?)
+    }
+
     pub fn history_recent(&self, limit: usize) -> Result<Vec<(Url, Option<String>, i64)>> {
         let mut stmt =
             self.conn.prepare("SELECT url, title, visited_at FROM history ORDER BY visited_at DESC LIMIT ?1")?;
@@ -222,6 +227,17 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].0, b);
         assert_eq!(recent[1].0, a);
+    }
+
+    #[test]
+    fn clear_history_removes_all_rows() {
+        let db = Db::open(":memory:").unwrap();
+        let url = Url::parse("https://a.example/").unwrap();
+        db.record_visit(&url, Some("A")).unwrap();
+        db.record_visit(&url, None).unwrap();
+        assert_eq!(db.clear_history().unwrap(), 2);
+        assert_eq!(db.clear_history().unwrap(), 0);
+        assert!(db.history_recent(10).unwrap().is_empty());
     }
 
     #[test]

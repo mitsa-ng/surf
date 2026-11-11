@@ -428,6 +428,13 @@ pub fn cs_send(
 }
 
 #[tauri::command]
+pub fn history_clear(app: AppHandle) -> Result<usize, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let db = state::lock(&state.db);
+    db.clear_history().map_err(|e| crate::CommandError::Message(e.to_string()))
+}
+
+#[tauri::command]
 pub fn settings_get(app: AppHandle, key: String) -> Result<Option<String>, crate::CommandError> {
     let state = app.state::<BrowserState>();
     let value = state::lock(&state.db)

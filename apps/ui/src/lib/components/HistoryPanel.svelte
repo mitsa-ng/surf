@@ -1,15 +1,41 @@
 <script lang="ts">
   import { ui, refreshHistory } from "../ui.svelte";
+  import { historyClear } from "../ipc";
+
+  let confirming = $state(false);
+  let clearNotice = $state("");
 
   function go(url: string) {
     ui.panel = null;
     window.dispatchEvent(new CustomEvent("surf:navigate", { detail: url }));
   }
+
+  // Two-step inline confirm: no native dialogs, works on every webview.
+  async function clearAll() {
+    if (!confirming) {
+      confirming = true;
+      return;
+    }
+    confirming = false;
+    try {
+      const removed = await historyClear();
+      clearNotice = `已清除 ${removed} 筆紀錄`;
+      await refreshHistory();
+    } catch (e) {
+      clearNotice = String(e);
+    }
+  }
 </script>
 
 <section class="panel" aria-label="瀏覽紀錄">
   <h2>瀏覽紀錄</h2>
-  <button class="refresh" onclick={() => refreshHistory()}>重新整理</button>
+  <div class="controls">
+    <button class="refresh" onclick={() => refreshHistory()}>重新整理</button>
+    <button class="clear" class:confirming onclick={() => void clearAll()}>
+      {confirming ? "確定清除全部？" : "清除所有紀錄"}
+    </button>
+    {#if clearNotice}<span class="notice" role="status">{clearNotice}</span>{/if}
+  </div>
   <ul>
     {#each ui.history as h (h.url + h.visited_at)}
       <li>
@@ -30,17 +56,31 @@
     font-size: 14px;
     font-weight: 600;
   }
-  .refresh {
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .refresh,
+  .clear {
     height: 28px;
     padding: 0 10px;
-    margin-bottom: 8px;
     border-radius: 6px;
     font-size: 12px;
     color: var(--text-secondary);
   }
-  .refresh:hover {
+  .refresh:hover,
+  .clear:hover {
     background: var(--hover);
     color: var(--text);
+  }
+  .clear.confirming {
+    color: #b3261e;
+  }
+  .notice {
+    color: var(--text-secondary);
+    font-size: 12px;
   }
   ul {
     list-style: none;

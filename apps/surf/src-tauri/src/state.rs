@@ -25,6 +25,9 @@ pub struct TabsSnapshot {
 
 pub struct BrowserState {
     pub panel_open: AtomicBool,
+    /// Desktop bookmarks bar visibility; mirrors the persisted
+    /// `setting:bookmarks_bar` and feeds the chrome height.
+    pub bookmarks_bar: AtomicBool,
     pub model: Mutex<TabModel>,
     pub db: Arc<Mutex<Db>>,
     pub registry: Mutex<Registry>,
@@ -50,6 +53,7 @@ impl BrowserState {
     pub fn new(db: Db) -> Self {
         Self {
             panel_open: AtomicBool::new(false),
+            bookmarks_bar: AtomicBool::new(false),
             model: Mutex::new(TabModel::new()),
             db: Arc::new(Mutex::new(db)),
             registry: Mutex::new(Registry::new()),
@@ -132,6 +136,13 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         if !filters.is_empty() {
             state.nav_filter.start(filters);
         }
+        // Bookmarks bar visibility persists across launches.
+        let bar = lock(&state.db)
+            .ext_kv_get("sys", "setting:bookmarks_bar")
+            .ok()
+            .flatten()
+            .is_some_and(|v| !v.is_empty());
+        state.bookmarks_bar.store(bar, std::sync::atomic::Ordering::Relaxed);
     }
     #[cfg(desktop)]
     {
