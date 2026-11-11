@@ -39,6 +39,15 @@ export async function openTab() {
   }
 }
 
+export async function openIncognito() {
+  try {
+    applySnapshot(await ipc.tabOpenIncognito());
+    tabs.error = "";
+  } catch (e) {
+    tabs.error = String(e);
+  }
+}
+
 export async function closeTab(id: number) {
   try {
     applySnapshot(await ipc.tabClose(id));

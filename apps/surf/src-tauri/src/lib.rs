@@ -53,6 +53,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_tabs,
             commands::tab_open,
+            commands::tab_open_incognito,
             commands::tab_close,
             commands::tab_activate,
             commands::tab_navigate,

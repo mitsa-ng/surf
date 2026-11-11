@@ -99,6 +99,7 @@ impl Db {
                 url: url.and_then(|u| Url::parse(&u).ok()),
                 title,
                 loading: false,
+                incognito: false,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -203,8 +204,9 @@ mod tests {
             url: Some(Url::parse("https://a.example/").unwrap()),
             title: Some("A".into()),
             loading: false,
+            incognito: false,
         };
-        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false };
+        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false };
         db.save_tab(0, &t1).unwrap();
         db.save_tab(1, &t2).unwrap();
         db.delete_tab(TabId(2)).unwrap();

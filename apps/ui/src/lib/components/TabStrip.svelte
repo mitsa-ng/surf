@@ -15,6 +15,9 @@
       onclick={() => activateTab(tab.id)}
     >
       <span class="label">{tabTitle(tab)}</span>
+      {#if tab.incognito}
+        <span class="private-mark" aria-label="無痕分頁" title="無痕">無痕</span>
+      {/if}
       {#if tab.loading}
         <span class="loading-dot" aria-label="載入中"></span>
       {/if}
@@ -89,6 +92,16 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  .private-mark {
+    flex: none;
+    padding: 1px 5px;
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1.2;
+    user-select: none;
   }
   .loading-dot {
     width: 6px;

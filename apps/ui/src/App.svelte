@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { init, openTab, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
+  import { init, openTab, openIncognito, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
   import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
   import { panelSetOpen } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
@@ -62,6 +62,7 @@
       listen<string>("deeplink://open", (e) => {
         const url = e.payload;
         if (url === "surf://settings") togglePanel("settings");
+        else if (url === "surf://private") void openIncognito();
         else if (url.startsWith("surf://open?url=")) {
           const target = decodeURIComponent(url.slice("surf://open?url=".length));
           void navigateActive(target);
@@ -95,6 +96,9 @@
     } else if (e.shiftKey && e.key.toLowerCase() === "j") {
       e.preventDefault();
       togglePanel("downloads");
+    } else if (e.shiftKey && e.key.toLowerCase() === "n") {
+      e.preventDefault();
+      void openIncognito();
     } else if (e.key.toLowerCase() === "f") {
       e.preventDefault();
       toggleFind();

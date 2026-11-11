@@ -32,6 +32,7 @@ Milestone 2（產品功能完備）的狀態真相檔。context 會丟失，這�
 
 | 日期 | 事項 |
 |---|---|
+| 2026-11-12 | 無痕分頁：`Cmd+Shift+N`／`surf://private` 開無痕 tab（TabState 帶 `incognito` 旗標、serde default 向下相容）；不寫歷史、不進持久化 session（restore 自然不含）；TabStrip「無痕」徽章＋網址列圓角 pill＋placeholder 標示。DB 對照實證：一般分頁導航有歷史紀錄（對照組=1）、無痕分頁兩次導航皆 0 筆、persisted tabs 不含無痕。限制：WebviewStorage/cookie 仍為共用 profile（真隔离需 wry 的 ephemeral profile 支援），徽章視覺只驗到型別層 |
 | 2026-11-12 | Chrome 對齊第二批判（全部 release app 實證）：頁內搜尋（`Cmd+F` FindBar＋`find_in_page` 指令；`window.find` 在 WKWebView 無效，改用 TreeWalker＋Range 選取，實證藍底選取與捲動定位）；分頁搜尋（`Cmd+Shift+A` overlay，過濾＋點擊切換＋Enter 選第一個）；下載管理（`downloads_list`/`download_reveal` 指令＋Rust 端紀錄（上限 100 筆）＋`Cmd+Shift+J` 下載面板＋「顯示」在 Finder（僅列出的紀錄路徑可開），實證 cloudflare 下載進面板）。macOS 下載 Finished 的 path 可為空（儲存面板流程），「顯示」按鈕僅在有路徑且成功時出現 |
 | 2026-11-12 | Chrome 對齊批次：書籤列（桌面，28px、極簡風；`Cmd+Shift+B` 切換、持久化 `setting:bookmarks_bar`、Rust `chrome_height` 動態幾何＋relayout；release app 實證開/關雙向、內容無覆蓋、持久化 1↔空）；清除瀏覽紀錄（`history_clear` 指令＋storage 測試＋歷史面板兩步確認按鈕，雙平台）；ACL 補兩個新指令。手機端書籤列刻意不做（BottomBar 佈局），清除歷史可用 |
 | 2026-11-12 | vendor wry 0.57.2（`vendor/wry`＋`[patch.crates-io]`）：Android 多 webview 的 per-webview eval 路由修復（`webviews` map＋`ForWebview` 訊息），content webview eval 實證 by-id 正確送達；診斷出第二層問題——主視窗的 invoke 回應/事件 eval 在 tauri-runtime-wry 的 registry 查找處靜默丟棄（證據與下一步見誠實限制）；無實體裝置（instance-swap 實機驗證仍待裝置） |

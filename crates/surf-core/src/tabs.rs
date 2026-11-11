@@ -18,6 +18,10 @@ pub struct TabState {
     pub url: Option<Url>,
     pub title: Option<String>,
     pub loading: bool,
+    /// Private tab: no history recording and no session persistence.
+    /// Storage isolation is per the platform webview profile; see NOTES.
+    #[serde(default)]
+    pub incognito: bool,
 }
 
 /// Rust-side source of truth for the tab list. The UI layer never derives
@@ -41,9 +45,18 @@ impl TabModel {
     }
 
     pub fn open(&mut self, url: Option<Url>) -> TabId {
+        self.open_with(url, false)
+    }
+
+    /// Open a private (incognito) tab.
+    pub fn open_private(&mut self, url: Option<Url>) -> TabId {
+        self.open_with(url, true)
+    }
+
+    fn open_with(&mut self, url: Option<Url>, incognito: bool) -> TabId {
         self.next_id += 1;
         let id = TabId(self.next_id);
-        let tab = TabState { id, url: url.clone(), title: None, loading: url.is_some() };
+        let tab = TabState { id, url: url.clone(), title: None, loading: url.is_some(), incognito };
         self.tabs.push(tab);
         self.active = Some(id);
         id
@@ -125,6 +138,19 @@ mod tests {
         assert_eq!(m.list().len(), 2);
         assert_eq!(m.active_id(), Some(b));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn private_tab_carries_flag_and_defaults_off() {
+        let mut m = TabModel::new();
+        let normal = m.open(None);
+        let private = m.open_private(Some(url("https://secret.example/")));
+        assert!(!m.get(normal).unwrap().incognito);
+        assert!(m.get(private).unwrap().incognito);
+        // Serialized snapshots round-trip the flag (serde default keeps
+        // old payloads readable).
+        let json = serde_json::to_string(m.get(private).unwrap()).unwrap();
+        assert!(json.contains("\"incognito\":true"));
     }
 
     #[test]

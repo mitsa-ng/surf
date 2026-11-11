@@ -40,6 +40,23 @@ pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabI
     id
 }
 
+/// Open a private (incognito) tab: no history recording, never written
+/// to the persisted session.
+#[cfg(desktop)]
+pub fn open_private_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabId {
+    let id = {
+        let state = app.state::<BrowserState>();
+        let mut model = state::lock(&state.model);
+        model.open_private(url.clone())
+    };
+    attach_webview(app, window, id, url);
+    // persist_session skips private tabs, but the previously active tab
+    // may reorder positions; keep the stored session consistent.
+    persist_session(app);
+    emit_tabs(app);
+    id
+}
+
 #[cfg(all(debug_assertions, desktop))]
 fn diagnose_bridge(app: &AppHandle, id: TabId) {
     let handle = app.clone();
@@ -89,7 +106,11 @@ fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool)
                     if let Some(host) = u.host_str() {
                         model.set_title(id, host.to_owned());
                     }
-                    let _ = state::lock(&state.db).record_visit(u, None);
+                    // Private tabs leave no history.
+                    let private = model.get(id).map(|t| t.incognito).unwrap_or(false);
+                    if !private {
+                        let _ = state::lock(&state.db).record_visit(u, None);
+                    }
                 }
             }
         }
@@ -287,8 +308,14 @@ pub fn persist_session(app: &AppHandle) {
     let db_result = (|| -> Result<(), surf_core::storage::StorageError> {
         let db = state::lock(&state.db);
         db.clear_tabs()?;
-        for (position, tab) in model.list().iter().enumerate() {
+        let mut position = 0;
+        for tab in model.list().iter() {
+            // Private tabs are never written to the stored session.
+            if tab.incognito {
+                continue;
+            }
             db.save_tab(position, tab)?;
+            position += 1;
         }
         Ok(())
     })();

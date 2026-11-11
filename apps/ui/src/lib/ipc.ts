@@ -6,6 +6,7 @@ export interface TabState {
   url: string | null;
   title: string | null;
   loading: boolean;
+  incognito?: boolean;
 }
 
 export interface TabsSnapshot {
@@ -22,6 +23,8 @@ export interface FilterCapabilities {
 export const getTabs = () => invoke<TabsSnapshot>("get_tabs");
 
 export const tabOpen = (url?: string) => invoke<TabsSnapshot>("tab_open", { url: url ?? null });
+
+export const tabOpenIncognito = () => invoke<TabsSnapshot>("tab_open_incognito");
 
 export const tabClose = (id: number) => invoke<TabsSnapshot>("tab_close", { id });
 

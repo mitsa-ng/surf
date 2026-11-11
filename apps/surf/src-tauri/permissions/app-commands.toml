@@ -6,6 +6,7 @@ description = "All browser chrome commands (tabs, bookmarks, history, settings, 
 commands.allow = [
     "get_tabs",
     "tab_open",
+    "tab_open_incognito",
     "tab_close",
     "tab_activate",
     "tab_navigate",

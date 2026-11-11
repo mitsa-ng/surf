@@ -36,6 +36,27 @@ pub fn tab_open(app: AppHandle, url: Option<String>) -> Result<TabsSnapshot, cra
 }
 
 #[tauri::command]
+pub fn tab_open_incognito(app: AppHandle) -> Result<TabsSnapshot, crate::CommandError> {
+    #[cfg(desktop)]
+    {
+        let window = app
+            .get_window(state::MAIN_LABEL)
+            .ok_or_else(|| crate::CommandError::Message("main window missing".into()))?;
+        crate::manager::open_private_tab(&app, &window, None);
+    }
+    #[cfg(mobile)]
+    {
+        let id = {
+            let state = app.state::<BrowserState>();
+            let model = state::lock(&state.model);
+            model.open_private(None)
+        };
+        let _ = crate::manager::ensure_tab_window(&app, id, None);
+    }
+    Ok(snapshot(&app))
+}
+
+#[tauri::command]
 pub fn tab_close(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
     #[cfg(desktop)]
     {

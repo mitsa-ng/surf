@@ -7,6 +7,7 @@
   let input = $state("");
   let focused = $state(false);
   let inputEl: HTMLInputElement | undefined = $state();
+  const privateMode = $derived(activeTab()?.incognito ?? false);
 
   // Refill from the model whenever the address changes and we are not editing.
   $effect(() => {
@@ -49,10 +50,11 @@
     bind:value={input}
     class="address"
     class:loading={activeTab()?.loading}
+    class:private={privateMode}
     type="text"
     spellcheck="false"
     autocomplete="off"
-    placeholder="搜尋或輸入網址"
+    placeholder={privateMode ? "無痕模式：搜尋或輸入網址" : "搜尋或輸入網址"}
     aria-label="網址與搜尋"
     onfocus={() => {
       focused = true;
@@ -108,6 +110,11 @@
   .address:focus {
     outline: none;
     border-color: var(--accent);
+  }
+  /* Private mode is a state, not decoration: the quiet pill marks it. */
+  .address.private {
+    border-color: var(--hairline);
+    border-radius: 15px;
   }
   /* Loading is a state, not decoration: a thin accent line while the
      active tab is in flight. */
