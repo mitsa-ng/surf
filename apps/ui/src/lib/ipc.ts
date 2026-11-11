@@ -7,6 +7,7 @@ export interface TabState {
   title: string | null;
   loading: boolean;
   incognito?: boolean;
+  pinned?: boolean;
 }
 
 export interface TabsSnapshot {
@@ -25,6 +26,11 @@ export const getTabs = () => invoke<TabsSnapshot>("get_tabs");
 export const tabOpen = (url?: string) => invoke<TabsSnapshot>("tab_open", { url: url ?? null });
 
 export const tabOpenIncognito = () => invoke<TabsSnapshot>("tab_open_incognito");
+
+export const tabSetPinned = (id: number, pinned: boolean) =>
+  invoke<TabsSnapshot>("tab_set_pinned", { id, pinned });
+
+export const tabReopenClosed = () => invoke<TabsSnapshot>("tab_reopen_closed");
 
 export const tabClose = (id: number) => invoke<TabsSnapshot>("tab_close", { id });
 

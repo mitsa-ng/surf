@@ -220,7 +220,9 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
 #[cfg(desktop)]
 pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
+    let reopen_info = snapshot_for_reopen(&state, id);
     let closed = state::lock(&state.model).close(id).ok_or(crate::CommandError::UnknownTab(id.0))?;
+    remember_closed(&state, reopen_info);
     state.cs_tokens.revoke(id);
     state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
     if let Some(view) = state::take_content_webview(app, id) {
@@ -285,6 +287,28 @@ pub fn eval_history(app: &AppHandle, id: TabId, js: &str) -> Result<(), crate::C
         let _ = view.eval(js);
     }
     Ok(())
+}
+
+/// Capture what reopen needs before the tab leaves the model; private
+/// tabs leave no trace.
+fn snapshot_for_reopen(state: &BrowserState, id: TabId) -> Option<crate::state::ClosedTabInfo> {
+    let model = state::lock(&state.model);
+    let tab = model.get(id)?;
+    if tab.incognito {
+        return None;
+    }
+    Some(crate::state::ClosedTabInfo { url: tab.url.clone(), title: tab.title.clone() })
+}
+
+/// Record a closed tab for reopen (Cmd+Shift+T).
+fn remember_closed(state: &BrowserState, info: Option<crate::state::ClosedTabInfo>) {
+    let Some(info) = info else { return };
+    let mut stack = state::lock(&state.recently_closed);
+    stack.push(info);
+    let len = stack.len();
+    if len > 20 {
+        stack.drain(0..len - 20);
+    }
 }
 
 fn search_url(app: &AppHandle, query: &str) -> Url {
@@ -389,9 +413,11 @@ pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
 #[cfg(mobile)]
 pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
+    let reopen_info = snapshot_for_reopen(&state, id);
     let closed = state::lock(&state.model)
         .close(id)
         .ok_or(crate::CommandError::UnknownTab(id.0))?;
+    remember_closed(&state, reopen_info);
     state.cs_tokens.revoke(id);
     state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
     drop(state);
@@ -453,4 +479,32 @@ pub fn navigate_mobile(app: &AppHandle, id: TabId, input: &str) -> Result<(), cr
     }
     emit_tabs(app);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::BrowserState;
+
+    #[test]
+    fn closed_tab_is_captured_before_removal_and_privates_are_skipped() {
+        let db = surf_core::storage::Db::open(":memory:").unwrap();
+        let state = BrowserState::new(db);
+        let url = Url::parse("https://closed.example/").unwrap();
+        let normal = state::lock(&state.model).open(Some(url.clone()));
+        let private = state::lock(&state.model).open_private(Some(url.clone()));
+
+        let info = super::snapshot_for_reopen(&state, normal).unwrap();
+        assert_eq!(info.url, Some(url.clone()));
+        assert!(super::snapshot_for_reopen(&state, private).is_none());
+
+        state::lock(&state.model).close(normal).unwrap();
+        super::remember_closed(&state, Some(info));
+        let stack_len = state::lock(&state.recently_closed).len();
+        assert_eq!(stack_len, 1);
+
+        // A second remember without a captured info (private close) is a no-op.
+        super::remember_closed(&state, None);
+        assert_eq!(state::lock(&state.recently_closed).len(), 1);
+    }
 }

@@ -56,6 +56,48 @@ pub fn tab_open_incognito(app: AppHandle) -> Result<TabsSnapshot, crate::Command
     Ok(snapshot(&app))
 }
 
+/// Pin or unpin a tab; pinned tabs sort to the leftmost group and are
+/// excluded from the tab-strip close button.
+#[tauri::command]
+pub fn tab_set_pinned(app: AppHandle, id: u64, pinned: bool) -> Result<TabsSnapshot, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let mut model = state::lock(&state.model);
+    model
+        .set_pinned(TabId(id), pinned)
+        .then_some(())
+        .ok_or(crate::CommandError::UnknownTab(id))?;
+    drop(model);
+    crate::manager::persist_session(&app);
+    Ok(snapshot(&app))
+}
+
+/// Reopen the most recently closed tab (Cmd+Shift+T).
+#[tauri::command]
+pub fn tab_reopen_closed(app: AppHandle) -> Result<TabsSnapshot, crate::CommandError> {
+    let info = {
+        let state = app.state::<BrowserState>();
+        let mut stack = state::lock(&state.recently_closed);
+        stack.pop()
+    };
+    let Some(info) = info else {
+        return Ok(snapshot(&app));
+    };
+    #[cfg(desktop)]
+    {
+        let window = app
+            .get_window(state::MAIN_LABEL)
+            .ok_or_else(|| crate::CommandError::Message("main window missing".into()))?;
+        crate::manager::open_tab(&app, &window, info.url);
+    }
+    #[cfg(mobile)]
+    {
+        crate::manager::open_tab_mobile(&app, info.url);
+    }
+    // Titles arrive from the page load; nothing else to restore.
+    let _ = info.title;
+    Ok(snapshot(&app))
+}
+
 #[tauri::command]
 pub fn tab_close(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
     #[cfg(desktop)]

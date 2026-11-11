@@ -7,6 +7,8 @@ commands.allow = [
     "get_tabs",
     "tab_open",
     "tab_open_incognito",
+    "tab_set_pinned",
+    "tab_reopen_closed",
     "tab_close",
     "tab_activate",
     "tab_navigate",

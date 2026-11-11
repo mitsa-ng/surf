@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { init, openTab, openIncognito, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
+  import { init, openTab, openIncognito, reopenClosed, setPinned, closeTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
   import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
   import { panelSetOpen } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
@@ -63,6 +63,11 @@
         const url = e.payload;
         if (url === "surf://settings") togglePanel("settings");
         else if (url === "surf://private") void openIncognito();
+        else if (url === "surf://pin") {
+          const id = tabs.activeId;
+          const tab = tabs.list.find((t) => t.id === id);
+          if (id !== null && tab) void setPinned(id, !tab.pinned);
+        } else if (url === "surf://reopen") void reopenClosed();
         else if (url.startsWith("surf://open?url=")) {
           const target = decodeURIComponent(url.slice("surf://open?url=".length));
           void navigateActive(target);
@@ -99,6 +104,9 @@
     } else if (e.shiftKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       void openIncognito();
+    } else if (e.shiftKey && e.key.toLowerCase() === "t") {
+      e.preventDefault();
+      void reopenClosed();
     } else if (e.key.toLowerCase() === "f") {
       e.preventDefault();
       toggleFind();

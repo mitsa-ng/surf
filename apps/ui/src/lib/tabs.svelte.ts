@@ -39,6 +39,24 @@ export async function openTab() {
   }
 }
 
+export async function setPinned(id: number, pinned: boolean) {
+  try {
+    applySnapshot(await ipc.tabSetPinned(id, pinned));
+    tabs.error = "";
+  } catch (e) {
+    tabs.error = String(e);
+  }
+}
+
+export async function reopenClosed() {
+  try {
+    applySnapshot(await ipc.tabReopenClosed());
+    tabs.error = "";
+  } catch (e) {
+    tabs.error = String(e);
+  }
+}
+
 export async function openIncognito() {
   try {
     applySnapshot(await ipc.tabOpenIncognito());

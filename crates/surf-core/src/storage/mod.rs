@@ -39,6 +39,8 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL,
         PRIMARY KEY (ext, key)
     );",
+    // v3: pinned tab flag
+    "ALTER TABLE tabs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
 ];
 
 pub struct Db {
@@ -71,8 +73,8 @@ impl Db {
 
     pub fn save_tab(&self, position: usize, tab: &TabState) -> Result<()> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO tabs (id, position, url, title) VALUES (?1, ?2, ?3, ?4)",
-            params![tab.id.0 as i64, position as i64, tab.url.as_ref().map(|u| u.as_str()), tab.title],
+            "INSERT OR REPLACE INTO tabs (id, position, url, title, pinned) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![tab.id.0 as i64, position as i64, tab.url.as_ref().map(|u| u.as_str()), tab.title, tab.pinned],
         )?;
         Ok(())
     }
@@ -89,17 +91,19 @@ impl Db {
 
     /// Restore the persisted session, ordered by tab position.
     pub fn load_tabs(&self) -> Result<Vec<TabState>> {
-        let mut stmt = self.conn.prepare("SELECT id, url, title FROM tabs ORDER BY position")?;
+        let mut stmt = self.conn.prepare("SELECT id, url, title, pinned FROM tabs ORDER BY position")?;
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
             let url: Option<String> = row.get(1)?;
             let title: Option<String> = row.get(2)?;
+            let pinned: i64 = row.get(3)?;
             Ok(TabState {
                 id: TabId(id as u64),
                 url: url.and_then(|u| Url::parse(&u).ok()),
                 title,
                 loading: false,
                 incognito: false,
+                pinned: pinned != 0,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -205,16 +209,32 @@ mod tests {
             title: Some("A".into()),
             loading: false,
             incognito: false,
+            pinned: false,
         };
-        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false };
+        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false, pinned: false };
         db.save_tab(0, &t1).unwrap();
         db.save_tab(1, &t2).unwrap();
+        let mut t3 = TabState {
+            id: TabId(3),
+            url: Some(Url::parse("https://pinned.example/").unwrap()),
+            title: None,
+            loading: false,
+            incognito: false,
+            pinned: true,
+        };
+        db.save_tab(2, &t3).unwrap();
         db.delete_tab(TabId(2)).unwrap();
+        t3.pinned = false;
         let restored = db.load_tabs().unwrap();
-        assert_eq!(restored.len(), 1);
+        assert_eq!(restored.len(), 2);
         assert_eq!(restored[0].id, TabId(1));
         assert_eq!(restored[0].url, t1.url);
         assert_eq!(restored[0].title.as_deref(), Some("A"));
+        assert!(!restored[0].pinned);
+        // The pinned flag round-trips through the database (the local
+        // mutation above proves load did not read the in-memory struct).
+        assert_eq!(restored[1].id, TabId(3));
+        assert!(restored[1].pinned);
     }
 
     #[test]

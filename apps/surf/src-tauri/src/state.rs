@@ -17,6 +17,13 @@ use crate::content_bridge::TokenRegistry;
 use crate::layout;
 use crate::tabview::TauriTabView;
 
+/// A closed tab remembered for reopen (Cmd+Shift+T).
+#[derive(Clone)]
+pub struct ClosedTabInfo {
+    pub url: Option<url::Url>,
+    pub title: Option<String>,
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct TabsSnapshot {
     pub tabs: Vec<TabState>,
@@ -46,6 +53,9 @@ pub struct BrowserState {
     pub nav_filter: crate::nav_filter::NavFilter,
     /// Download history for the downloads panel (newest first).
     pub downloads: Mutex<Vec<crate::commands::DownloadRecord>>,
+    /// Recently closed tabs (for Cmd+Shift+T), newest last. Private tabs
+    /// are never recorded.
+    pub recently_closed: Mutex<Vec<crate::state::ClosedTabInfo>>,
     /// File-based auto sync reconciler state (desktop).
     #[cfg(desktop)]
     pub auto_sync: std::sync::Arc<crate::auto_sync::AutoSync>,
@@ -72,6 +82,7 @@ impl BrowserState {
             secrets: std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new()),
             nav_filter: crate::nav_filter::NavFilter::default(),
             downloads: Mutex::new(Vec::new()),
+            recently_closed: Mutex::new(Vec::new()),
             #[cfg(desktop)]
             auto_sync: std::sync::Arc::new(crate::auto_sync::AutoSync::default()),
         }

@@ -22,6 +22,10 @@ pub struct TabState {
     /// Storage isolation is per the platform webview profile; see NOTES.
     #[serde(default)]
     pub incognito: bool,
+    /// Pinned tab: kept in the leftmost group and protected from the
+    /// tab-strip close button.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// Rust-side source of truth for the tab list. The UI layer never derives
@@ -56,10 +60,31 @@ impl TabModel {
     fn open_with(&mut self, url: Option<Url>, incognito: bool) -> TabId {
         self.next_id += 1;
         let id = TabId(self.next_id);
-        let tab = TabState { id, url: url.clone(), title: None, loading: url.is_some(), incognito };
+        let tab = TabState { id, url: url.clone(), title: None, loading: url.is_some(), incognito, pinned: false };
         self.tabs.push(tab);
         self.active = Some(id);
         id
+    }
+
+    /// Pin or unpin a tab. Pinned tabs always occupy the leftmost
+    /// positions; pin moves the tab before the first unpinned one, unpin
+    /// moves it after the last pinned one.
+    pub fn set_pinned(&mut self, id: TabId, pinned: bool) -> bool {
+        let Some(idx) = self.tabs.iter().position(|t| t.id == id) else {
+            return false;
+        };
+        if self.tabs[idx].pinned == pinned {
+            return true;
+        }
+        self.tabs[idx].pinned = pinned;
+        let tab = self.tabs.remove(idx);
+        let target = if pinned {
+            self.tabs.iter().position(|t| !t.pinned).unwrap_or(self.tabs.len())
+        } else {
+            self.tabs.iter().rposition(|t| t.pinned).map_or(0, |i| i + 1)
+        };
+        self.tabs.insert(target, tab);
+        true
     }
 
     pub fn close(&mut self, id: TabId) -> Option<ClosedTab> {
@@ -151,6 +176,31 @@ mod tests {
         // old payloads readable).
         let json = serde_json::to_string(m.get(private).unwrap()).unwrap();
         assert!(json.contains("\"incognito\":true"));
+    }
+
+    #[test]
+    fn pin_moves_to_left_group_and_unpin_appends_after_pinned() {
+        let mut m = TabModel::new();
+        let a = m.open(Some(url("https://a.example/")));
+        let b = m.open(Some(url("https://b.example/")));
+        let c = m.open(Some(url("https://c.example/")));
+
+        assert!(m.set_pinned(c, true));
+        // Pinning c moves it before the first unpinned tab (position 0).
+        assert_eq!(m.list().iter().map(|t| t.id).collect::<Vec<_>>(), vec![c, a, b]);
+
+        assert!(m.set_pinned(a, true));
+        // Pinning a joins it to the pinned group: [c, a] then unpinned [b].
+        assert_eq!(m.list().iter().map(|t| t.id).collect::<Vec<_>>(), vec![c, a, b]);
+
+        assert!(m.set_pinned(a, false));
+        // Unpinning a moves it right after the last pinned (c).
+        assert_eq!(m.list().iter().map(|t| t.id).collect::<Vec<_>>(), vec![c, a, b]);
+        assert!(m.get(c).unwrap().pinned);
+        assert!(!m.get(a).unwrap().pinned);
+
+        // Unknown id is a no-op.
+        assert!(!m.set_pinned(TabId(999), true));
     }
 
     #[test]
