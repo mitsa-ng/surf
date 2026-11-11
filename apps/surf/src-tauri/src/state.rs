@@ -34,6 +34,10 @@ pub struct TabsSnapshot {
 
 pub struct BrowserState {
     pub panel_open: AtomicBool,
+    /// Any chrome overlay (tab menu, tab search, address suggestions)
+    /// needs room below the chrome stack; when set, relayout expands the
+    /// chrome webview to the full window like the panel does.
+    pub overlay_open: AtomicBool,
     /// Desktop bookmarks bar visibility; mirrors the persisted
     /// `setting:bookmarks_bar` and feeds the chrome height.
     pub bookmarks_bar: AtomicBool,
@@ -70,6 +74,7 @@ impl BrowserState {
     pub fn new(db: Db) -> Self {
         Self {
             panel_open: AtomicBool::new(false),
+            overlay_open: AtomicBool::new(false),
             bookmarks_bar: AtomicBool::new(false),
             model: Mutex::new(TabModel::new()),
             db: Arc::new(Mutex::new(db)),

@@ -51,6 +51,12 @@
     if (highlight >= suggestions.length) highlight = -1;
   });
 
+  // Overlays need the chrome webview expanded below the toolbar; the
+  // app-level effect reacts to this flag.
+  $effect(() => {
+    ui.suggestOpen = focused && suggestions.length > 0;
+  });
+
   function closeSuggestions() {
     highlight = -1;
     inputEl?.blur();

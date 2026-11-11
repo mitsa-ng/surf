@@ -3,7 +3,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, openIncognito, reopenClosed, setPinned, closeTab, activateTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
   import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
-  import { panelSetOpen, splitClear, splitSet } from "./lib/ipc";
+  import { overlaySetOpen, panelSetOpen, splitClear, splitSet } from "./lib/ipc";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
@@ -24,6 +24,14 @@
     const open = ui.panel !== null;
     document.body.classList.toggle("panel-open", open);
     void panelSetOpen(open).catch((error) => console.error(String(error)));
+  });
+
+  // Any chrome overlay (tab menu, tab search, address suggestions) needs
+  // the chrome webview to extend below the chrome stack, above content.
+  $effect(() => {
+    if (isMobile) return;
+    const overlay = ui.tabMenu !== null || ui.tabSearchOpen || ui.suggestOpen;
+    void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
   });
 
   onMount(() => {
@@ -74,6 +82,7 @@
           const other = tabs.list.find((t) => t.id !== active && !t.incognito)?.id ?? null;
           if (active !== null && other !== null) void splitSet(active, other).catch(console.error);
         } else if (url === "surf://unsplit") void splitClear().catch(console.error);
+        else if (url === "surf://tabs") toggleTabSearch();
         else if (url.startsWith("surf://open?url=")) {
           const target = decodeURIComponent(url.slice("surf://open?url=".length));
           void navigateActive(target);

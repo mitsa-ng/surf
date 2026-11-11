@@ -19,6 +19,8 @@ export const ui = $state<{
   findOpen: boolean;
   /** Right-click menu on a tab strip row. */
   tabMenu: null | { x: number; y: number; tabId: number };
+  /** Address suggestions visible (drives chrome expansion). */
+  suggestOpen: boolean;
 }>({
   panel: null,
   extensions: [],
@@ -33,6 +35,7 @@ export const ui = $state<{
   tabSearchOpen: false,
   findOpen: false,
   tabMenu: null,
+  suggestOpen: false,
 });
 
 let started = false;

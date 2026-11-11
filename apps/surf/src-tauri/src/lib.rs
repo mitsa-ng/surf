@@ -86,6 +86,7 @@ pub fn run() {
             commands::sync_auto_set,
             commands::pick_sync_file,
             layout::panel_set_open,
+            layout::overlay_set_open,
             layout::bookmarks_bar_set_open,
             layout::split_set,
             layout::split_clear,

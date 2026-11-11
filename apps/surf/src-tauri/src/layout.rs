@@ -37,8 +37,9 @@ pub fn relayout_window(window: &Window<Wry>) -> Result<(), tauri::Error> {
     let size = window.inner_size()?;
     let logical_size = size.to_logical::<f64>(scale);
     let state = app.state::<BrowserState>();
-    let panel_open = state.panel_open.load(Ordering::Relaxed);
-    let chrome_h = if panel_open { logical_size.height } else { chrome_height(&state) };
+    let expanded = state.panel_open.load(Ordering::Relaxed)
+        || state.overlay_open.load(Ordering::Relaxed);
+    let chrome_h = if expanded { logical_size.height } else { chrome_height(&state) };
 
     let chrome = app.get_webview(CHROME_LABEL);
     if let Some(chrome) = &chrome {
@@ -75,7 +76,7 @@ pub fn relayout_window(window: &Window<Wry>) -> Result<(), tauri::Error> {
             }
         }
     }
-    if panel_open {
+    if expanded {
         if let Some(chrome) = chrome {
             // Re-adding the chrome child moves its native view above the
             // content webviews, where CSS z-index cannot reach.
@@ -83,6 +84,23 @@ pub fn relayout_window(window: &Window<Wry>) -> Result<(), tauri::Error> {
         }
     }
     Ok(())
+}
+
+/// Chrome overlays (tab menu, tab search, address suggestions) render
+/// inside the chrome webview and may extend below the chrome stack;
+/// while any is open the chrome webview covers the window transparently.
+#[tauri::command]
+pub fn overlay_set_open(app: AppHandle, open: bool) -> Result<(), String> {
+    let state = app.state::<BrowserState>();
+    state.overlay_open.store(open, Ordering::Relaxed);
+    #[cfg(desktop)]
+    {
+        relayout(&app).map_err(|error| error.to_string())
+    }
+    #[cfg(mobile)]
+    {
+        Ok(())
+    }
 }
 
 #[tauri::command]
