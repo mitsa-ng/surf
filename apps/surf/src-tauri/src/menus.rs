@@ -27,6 +27,8 @@ pub fn build(app: &tauri::AppHandle) -> tauri::Result<()> {
         .copy()
         .paste()
         .select_all()
+        .separator()
+        .item(&MenuItemBuilder::with_id("surf.find", "尋找…").accelerator("CmdOrCtrl+F").build(app)?)
         .build()?;
     let reload = MenuItemBuilder::with_id("surf.reload", "重新載入").accelerator("CmdOrCtrl+R").build(app)?;
     let view = SubmenuBuilder::new(app, "檢視")

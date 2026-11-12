@@ -14,13 +14,24 @@ pub fn wire(app: &AppHandle) {
     app.deep_link().on_open_url(move |event| {
         for url in event.urls() {
             forward(&handle, url.as_ref());
+            // Cold start: the runtime event can fire before the chrome UI
+            // mounts its listener, which loses the URL; queue it too so
+            // the UI takes it once ready. The UI's single take at mount
+            // cannot double-apply it.
+            let state = handle.state::<crate::state::BrowserState>();
+            let mut queued = crate::state::lock(&state.launch_deeplink);
+            if queued.is_none() {
+                *queued = Some(url.to_string());
+            }
         }
     });
-    // Cold start: the launch URL is queued before the chrome UI mounts,
-    // so the runtime event would be lost; keep it for the UI to take.
+    // Launch URLs that predate wiring land here instead.
     if let Some(first) = app.deep_link().get_current().ok().flatten().and_then(|urls| urls.first().cloned()) {
         let state = app.state::<crate::state::BrowserState>();
-        *crate::state::lock(&state.launch_deeplink) = Some(first.to_string());
+        let mut queued = crate::state::lock(&state.launch_deeplink);
+        if queued.is_none() {
+            *queued = Some(first.to_string());
+        }
     }
 }
 

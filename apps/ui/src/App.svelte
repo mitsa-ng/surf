@@ -91,6 +91,9 @@
           case "surf.settings":
             togglePanel("settings");
             break;
+          case "surf.find":
+            toggleFind();
+            break;
         }
       }),
       listen<string>("deeplink://open", (e) => handleDeepLink(e.payload)),
