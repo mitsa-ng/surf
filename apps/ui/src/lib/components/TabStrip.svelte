@@ -29,14 +29,12 @@
     >
       <span class="head">
         <Favicon url={tab.url} size={16} />
-        {#if !tab.pinned}
-          <span class="label">{tabTitle(tab)}</span>
-          {#if tab.incognito}
-            <span class="private-mark" aria-label="無痕分頁" title="無痕">無痕</span>
-          {/if}
-          {#if tab.loading}
-            <span class="loading-dot" aria-label="載入中"></span>
-          {/if}
+        <span class="label">{tabTitle(tab)}</span>
+        {#if tab.incognito}
+          <span class="private-mark" aria-label="無痕分頁" title="無痕">無痕</span>
+        {/if}
+        {#if tab.loading}
+          <span class="loading-dot" aria-label="載入中"></span>
         {/if}
       </span>
       {#if tab.id === tabs.activeId}
@@ -132,12 +130,11 @@
     color: var(--text-secondary);
     font-size: 12px;
   }
+  /* Pinned tabs keep their full size and title: the star toggle must
+     not shrink the row (owner decision, overriding the icon-only form).
+     Grouping left + accent star + hidden close still mark the state. */
   .tab.pinned {
-    flex: none;
-    min-width: 34px;
-    max-width: 34px;
-    padding: 0 9px;
-    justify-content: center;
+    min-width: 48px;
   }
   .tab.split {
     box-shadow: inset 2px 0 0 var(--accent);
@@ -224,7 +221,7 @@
     opacity: 0;
   }
   .tab.pinned .pin {
-    right: 2px;
+    right: 4px;
     color: var(--accent);
     opacity: 0.7;
   }
