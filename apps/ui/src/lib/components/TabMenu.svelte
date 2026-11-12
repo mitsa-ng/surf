@@ -1,13 +1,22 @@
 <script lang="ts">
   import { ui, refreshBookmarks } from "../ui.svelte";
-  import { tabs, closeTab, openTab, setPinned } from "../tabs.svelte";
-  import { splitClear, splitSet, tabOpen } from "../ipc";
+  import { tabs, closeTab, openTab, setPinned, applySnapshot } from "../tabs.svelte";
+  import { splitClear, splitSet, tabNavigate, tabReload, tabCloseOthers, tabCloseRight } from "../ipc";
 
   const menu = $derived(ui.tabMenu);
   const tab = $derived(menu ? tabs.list.find((t) => t.id === menu.tabId) ?? null : null);
   const isSplitMember = $derived(
     menu && tabs.split ? tabs.split[0] === menu.tabId || tabs.split[1] === menu.tabId : false,
   );
+  // Chrome leaves pinned tabs alive in both batch closes.
+  const hasOtherTabs = $derived(
+    menu ? tabs.list.some((t) => t.id !== menu.tabId && !t.pinned) : false,
+  );
+  const hasRightTabs = $derived.by(() => {
+    if (!menu) return false;
+    const pos = tabs.list.findIndex((t) => t.id === menu.tabId);
+    return pos >= 0 && tabs.list.slice(pos + 1).some((t) => !t.pinned);
+  });
 
   let menuEl: HTMLDivElement | undefined = $state();
 
@@ -51,6 +60,36 @@
     next!.focus();
   }
 
+  function newTab() {
+    void openTab();
+    close();
+  }
+
+  async function reload() {
+    if (!tab) return;
+    await tabReload(tab.id).catch((e) => console.error(String(e)));
+    close();
+  }
+
+  async function duplicate() {
+    if (tab?.url) await openTab(tab.url);
+    close();
+  }
+
+  // Chrome's paste-and-go: the clipboard text resolves as URL or search
+  // in this tab. The click gesture satisfies clipboard read.
+  async function pasteAndGo() {
+    const target = tab;
+    close();
+    if (!target) return;
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (text) applySnapshot(await tabNavigate(target.id, text));
+    } catch (e) {
+      console.error(String(e));
+    }
+  }
+
   async function copyUrl() {
     if (!tab?.url) return;
     try {
@@ -59,11 +98,6 @@
       // Clipboard needs a user gesture on some webviews; the menu click is
       // one, so failures here are rare. Nothing else to do honestly.
     }
-    close();
-  }
-
-  async function duplicate() {
-    if (tab?.url) await openTab(tab.url);
     close();
   }
 
@@ -92,6 +126,18 @@
     close();
   }
 
+  async function closeOthers() {
+    if (!menu) return;
+    close();
+    await tabCloseOthers(menu.tabId).then(applySnapshot).catch((e) => console.error(String(e)));
+  }
+
+  async function closeRight() {
+    if (!menu) return;
+    close();
+    await tabCloseRight(menu.tabId).then(applySnapshot).catch((e) => console.error(String(e)));
+  }
+
   // Refresh the star state after pin toggles from the menu.
   $effect(() => {
     void refreshBookmarks();
@@ -110,8 +156,15 @@
     style:left={`${menu.x}px`}
     style:top={`${menu.y}px`}
   >
+    <button role="menuitem" onclick={newTab}>
+      <span>開新分頁</span><span class="sc">⌘T</span>
+    </button>
+    <button role="menuitem" onclick={() => void reload()}>
+      <span>重新載入</span><span class="sc">⌘R</span>
+    </button>
+    <button role="menuitem" onclick={() => void duplicate()} disabled={!tab.url}>複製</button>
+    <button role="menuitem" onclick={() => void pasteAndGo()}>貼上並前往</button>
     <button role="menuitem" onclick={() => void copyUrl()} disabled={!tab.url}>複製網址</button>
-    <button role="menuitem" onclick={() => void duplicate()} disabled={!tab.url}>複製分頁</button>
     <hr aria-hidden="true" />
     <button role="menuitem" onclick={() => void togglePin()}>{tab.pinned ? "取消釘選" : "釘選"}</button>
     {#if !isSplitMember}
@@ -120,7 +173,11 @@
       <button role="menuitem" onclick={() => void leaveSplit()}>結束分割畫面</button>
     {/if}
     <hr aria-hidden="true" />
-    <button role="menuitem" class="danger" onclick={removeTab} disabled={tab.pinned}>關閉分頁</button>
+    <button role="menuitem" onclick={removeTab}>
+      <span>關閉分頁</span><span class="sc">⌘W</span>
+    </button>
+    <button role="menuitem" onclick={() => void closeOthers()} disabled={!hasOtherTabs}>關閉其他分頁</button>
+    <button role="menuitem" onclick={() => void closeRight()} disabled={!hasRightTabs}>關閉右側分頁</button>
   </div>
 {/if}
 
@@ -135,14 +192,18 @@
     z-index: 8;
     display: flex;
     flex-direction: column;
-    min-width: 200px;
+    min-width: 220px;
     padding: 6px;
     background: var(--toolbar-surface);
     border-radius: 10px;
     box-shadow: 0 10px 34px rgba(0, 0, 0, 0.2);
   }
   button {
-    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    height: 30px;
     padding: 0 12px;
     border-radius: 8px;
     text-align: left;
@@ -156,18 +217,13 @@
   button:disabled {
     opacity: 0.4;
   }
+  .sc {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
   hr {
     border: none;
     border-top: 1px solid var(--hairline);
     margin: 5px 6px;
-  }
-  .danger {
-    color: #b3261e;
-  }
-  @media (prefers-color-scheme: dark) {
-    .danger {
-      /* Same hue, lightened for the dark surface (4.5:1+). */
-      color: #f2b8b5;
-    }
   }
 </style>

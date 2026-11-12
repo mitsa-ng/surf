@@ -112,6 +112,50 @@ pub fn tab_close(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::Command
     Ok(snapshot(&app))
 }
 
+/// Chrome-parity menu actions: close every other unpinned tab, or every
+/// unpinned tab to the right of `id`. Each target runs the normal close
+/// path so reopen capture and webview teardown behave one-by-one.
+#[tauri::command]
+pub fn tab_close_others(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
+    let targets = {
+        let state = app.state::<BrowserState>();
+        let targets = state::lock(&state.model).others_to_close(TabId(id));
+        targets
+    };
+    for target in targets {
+        #[cfg(desktop)]
+        {
+            crate::manager::close_tab(&app, target)?;
+        }
+        #[cfg(mobile)]
+        {
+            crate::manager::close_tab_mobile(&app, target).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        }
+    }
+    Ok(snapshot(&app))
+}
+
+/// See `tab_close_others`.
+#[tauri::command]
+pub fn tab_close_right(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
+    let targets = {
+        let state = app.state::<BrowserState>();
+        let targets = state::lock(&state.model).right_to_close(TabId(id));
+        targets
+    };
+    for target in targets {
+        #[cfg(desktop)]
+        {
+            crate::manager::close_tab(&app, target)?;
+        }
+        #[cfg(mobile)]
+        {
+            crate::manager::close_tab_mobile(&app, target).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        }
+    }
+    Ok(snapshot(&app))
+}
+
 #[tauri::command]
 pub fn tab_activate(app: AppHandle, id: u64) -> Result<TabsSnapshot, crate::CommandError> {
     #[cfg(desktop)]

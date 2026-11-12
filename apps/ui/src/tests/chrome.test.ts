@@ -160,4 +160,49 @@ describe("tab menu", () => {
     await unmount(app);
     document.body.innerHTML = "";
   });
+
+  it("shows the full chrome-parity item set with shortcut labels", async () => {
+    seedTabs([
+      { id: 1, url: "https://a.example/", title: "A", loading: false },
+      { id: 2, url: "https://b.example/", title: "B", loading: false },
+    ]);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    ui.tabMenu = { x: 20, y: 20, tabId: 1 };
+    const app = mount(TabMenu, { target });
+    await new Promise((r) => setTimeout(r, 10));
+    const labels = Array.from(target.querySelectorAll<HTMLButtonElement>(".menu button")).map(
+      (b) => b.textContent ?? "",
+    );
+    for (const wanted of ["開新分頁", "重新載入", "複製", "貼上並前往", "複製網址", "釘選", "關閉分頁", "關閉其他分頁", "關閉右側分頁"]) {
+      expect(labels.some((l) => l.includes(wanted)), `menu item missing: ${wanted}`).toBe(true);
+    }
+    expect(labels.some((l) => l.includes("⌘T")), "⌘T shortcut label").toBe(true);
+    expect(labels.some((l) => l.includes("⌘R")), "⌘R shortcut label").toBe(true);
+    expect(labels.some((l) => l.includes("⌘W")), "⌘W shortcut label").toBe(true);
+    // With another unpinned tab present, both batch closes are enabled.
+    const byText = (frag: string) =>
+      Array.from(target.querySelectorAll<HTMLButtonElement>(".menu button")).find((b) =>
+        (b.textContent ?? "").includes(frag),
+      )!;
+    expect(byText("關閉其他分頁").disabled).toBe(false);
+    expect(byText("關閉右側分頁").disabled).toBe(false);
+    await unmount(app);
+
+    // On the last tab both batch closes gray out, like Chrome.
+    seedTabs([{ id: 9, url: "https://solo.example/", title: "S", loading: false }]);
+    ui.tabMenu = { x: 20, y: 20, tabId: 9 };
+    const target2 = document.createElement("div");
+    document.body.appendChild(target2);
+    const app2 = mount(TabMenu, { target: target2 });
+    await new Promise((r) => setTimeout(r, 10));
+    const byText2 = (frag: string) =>
+      Array.from(target2.querySelectorAll<HTMLButtonElement>(".menu button")).find((b) =>
+        (b.textContent ?? "").includes(frag),
+      )!;
+    expect(byText2("關閉其他分頁").disabled, "solo tab grays close-others").toBe(true);
+    expect(byText2("關閉右側分頁").disabled, "last tab grays close-right").toBe(true);
+    await unmount(app2);
+    document.body.innerHTML = "";
+  });
 });

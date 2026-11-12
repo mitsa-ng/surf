@@ -57,6 +57,8 @@ pub fn run() {
             commands::tab_set_pinned,
             commands::tab_reopen_closed,
             commands::tab_close,
+            commands::tab_close_others,
+            commands::tab_close_right,
             commands::tab_activate,
             commands::tab_navigate,
             commands::tab_back,

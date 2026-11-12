@@ -159,6 +159,22 @@ impl TabModel {
         }
     }
 
+    /// Ids of the unpinned tabs other than `keep`, for the Chrome-parity
+    /// "close other tabs" menu action. Pinned tabs survive it, as in
+    /// Chrome; the caller runs each id through the normal close path.
+    pub fn others_to_close(&self, keep: TabId) -> Vec<TabId> {
+        self.tabs.iter().filter(|t| t.id != keep && !t.pinned).map(|t| t.id).collect()
+    }
+
+    /// Ids of the unpinned tabs after `after` in strip order, for the
+    /// "close tabs to the right" action.
+    pub fn right_to_close(&self, after: TabId) -> Vec<TabId> {
+        let Some(pos) = self.tabs.iter().position(|t| t.id == after) else {
+            return Vec::new();
+        };
+        self.tabs[pos + 1..].iter().filter(|t| !t.pinned).map(|t| t.id).collect()
+    }
+
     pub fn set_url(&mut self, id: TabId, url: Url) -> bool {
         self.mut_tab(id).map(|t| t.url = Some(url)).is_some()
     }
@@ -385,5 +401,27 @@ mod tests {
         assert!(m.set_url(a, url("https://a.example/")));
         assert_eq!(m.get(a).unwrap().url, Some(url("https://a.example/")));
         assert!(!m.activate(TabId(999)));
+    }
+
+    #[test]
+    fn batch_close_targets_skip_pinned_and_self() {
+        let mut m = TabModel::new();
+        let a = m.open(None);
+        let b = m.open(None);
+        let c = m.open(None);
+        let d = m.open(None);
+        assert!(m.set_pinned(c, true));
+        // Pinning moved c first; order is now c, a, b, d.
+        assert_eq!(m.list().iter().map(|t| t.id).collect::<Vec<_>>(), vec![c, a, b, d]);
+        // Close others: the keep tab and pinned tabs survive.
+        assert_eq!(m.others_to_close(b), vec![a, d]);
+        // Close right of a: only unpinned tabs after a, pinned excluded.
+        assert_eq!(m.right_to_close(a), vec![b, d]);
+        // Right of the last unpinned tab is empty; unknown ids too.
+        assert!(m.right_to_close(d).is_empty());
+        assert!(m.right_to_close(TabId(999)).is_empty());
+        // An unknown keep id still protects nothing: every unpinned tab
+        // is a target.
+        assert_eq!(m.others_to_close(TabId(999)), vec![a, b, d]);
     }
 }

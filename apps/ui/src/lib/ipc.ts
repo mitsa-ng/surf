@@ -43,6 +43,12 @@ export const splitClear = () => invoke<void>("split_clear");
 
 export const tabClose = (id: number) => invoke<TabsSnapshot>("tab_close", { id });
 
+/** Close every other unpinned tab (Chrome's "close other tabs"). */
+export const tabCloseOthers = (id: number) => invoke<TabsSnapshot>("tab_close_others", { id });
+
+/** Close every unpinned tab to the right of `id` in strip order. */
+export const tabCloseRight = (id: number) => invoke<TabsSnapshot>("tab_close_right", { id });
+
 export const tabActivate = (id: number) => invoke<TabsSnapshot>("tab_activate", { id });
 
 export const tabNavigate = (id: number, input: string) => invoke<TabsSnapshot>("tab_navigate", { id, input });
