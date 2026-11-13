@@ -24,6 +24,40 @@ pub fn emit_tabs(app: &AppHandle) {
     let _ = app.emit_to("chrome", TABS_EVENT, &snapshot);
 }
 
+/// Broadcast a tabs.* event to every running extension background thread
+/// that holds the "tabs" API grant (Chrome gates url/title data the same
+/// way). Names map onto surf.tabs.onXxx in the script world.
+pub fn notify_tabs_event(app: &AppHandle, name: &str, payload: serde_json::Value) {
+    let state = app.state::<BrowserState>();
+    let ids = state::lock(&state.bg_threads).ids();
+    if ids.is_empty() {
+        return;
+    }
+    let mut allowed = Vec::new();
+    {
+        let mut pm = state::lock(&state.permission);
+        for id in &ids {
+            if pm.ensure(id, &surf_ext_host::permission::PermissionRequest::Api("tabs".into())) {
+                allowed.push(id.clone());
+            }
+        }
+    }
+    for id in allowed {
+        state::notify_bg(
+            app,
+            &id,
+            crate::bg::BgMsg::Envelope(surf_ext_host::router::Envelope {
+                from: surf_ext_host::router::Endpoint::Host,
+                to: surf_ext_host::router::Endpoint::Extension(id.clone()),
+                body: surf_ext_host::router::MessageBody::Event {
+                    name: name.to_owned(),
+                    payload: payload.clone(),
+                },
+            }),
+        );
+    }
+}
+
 /// Journal a committed navigation into the model and refresh the
 /// mirrored back/forward flags; only a flag change re-broadcasts.
 #[cfg(desktop)]
@@ -37,13 +71,13 @@ fn record_navigation(app: &AppHandle, id: TabId, url: &Url) {
     if changed {
         emit_tabs(app);
     }
+    notify_tabs_event(app, "tabs.onUpdated", serde_json::json!({ "id": id.0, "changeInfo": { "url": url.as_str() } }));
 }
 
 /// A load that never reaches Finished would spin the tab dot forever
 /// (wry/tauri expose no failure signal, so DNS deaths and blocked frames
 /// leave `loading` stuck); clear the flag after 15 seconds as the honest
 /// approximation of a failed load.
-#[cfg(desktop)]
 fn arm_loading_watchdog(app: &AppHandle, id: TabId) {
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -71,6 +105,11 @@ pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabI
     let _ = window;
     persist_session(app);
     emit_tabs(app);
+    notify_tabs_event(
+        app,
+        "tabs.onCreated",
+        serde_json::to_value(state::lock(&app.state::<BrowserState>().model).get(id)).unwrap_or(serde_json::Value::Null),
+    );
     id
 }
 
@@ -88,6 +127,11 @@ pub fn open_private_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>)
     // may reorder positions; keep the stored session consistent.
     persist_session(app);
     emit_tabs(app);
+    notify_tabs_event(
+        app,
+        "tabs.onCreated",
+        serde_json::to_value(state::lock(&app.state::<BrowserState>().model).get(id)).unwrap_or(serde_json::Value::Null),
+    );
     id
 }
 
@@ -123,6 +167,81 @@ fn nav_verdict(app: &AppHandle, id: TabId, url: &Url) -> bool {
 /// Model bookkeeping shared by desktop child webviews and mobile tab
 /// windows: loading state, committed URL, history, and the interim host
 /// title until the document-title event fires.
+/// Tab audio mute at the JS level: WKWebView exposes no native mute API
+/// (probed: no KVC key, no private selectors on macOS 27.2), so the page's
+/// media elements are muted directly and an observer keeps later ones
+/// muted. Unmuting restores the elements and drops the observer.
+pub(crate) const MUTE_SCRIPT: &str = r#"(function (muted) {
+  if (!window.__surfMute) window.__surfMute = { on: false, obs: null };
+  var s = window.__surfMute;
+  s.on = muted;
+  function apply(el) { try { el.muted = muted; } catch (e) {} }
+  var all = document.querySelectorAll("video, audio");
+  for (var i = 0; i < all.length; i++) apply(all[i]);
+  if (muted && !s.obs) {
+    s.obs = new MutationObserver(function (muts) {
+      for (var j = 0; j < muts.length; j++) {
+        var add = muts[j].addedNodes;
+        for (var k = 0; k < add.length; k++) {
+          var n = add[k];
+          if (!n || n.nodeType !== 1) continue;
+          if (n.tagName === "VIDEO" || n.tagName === "AUDIO") apply(n);
+          var inner = n.querySelectorAll ? n.querySelectorAll("video, audio") : [];
+          for (var q = 0; q < inner.length; q++) apply(inner[q]);
+        }
+      }
+    });
+    s.obs.observe(document.documentElement, { childList: true, subtree: true });
+  }
+  if (!muted && s.obs) { try { s.obs.disconnect(); } catch (e) {} s.obs = null; }
+})"#;
+
+/// Apply the tab's recorded zoom and mute state to its webview, and fill
+/// a saved login for the page's host when one exists. Called on
+/// load-finish because a fresh document starts at 100% and unmuted.
+fn reapply_tab_media(app: &AppHandle, id: TabId) {
+    let state = app.state::<BrowserState>();
+    let (zoom, muted, host) = {
+        let model = state::lock(&state.model);
+        model
+            .get(id)
+            .map(|t| (t.zoom, t.muted, t.url.as_ref().and_then(|u| u.host_str().map(str::to_owned))))
+            .unwrap_or((1.0, false, None))
+    };
+    if let Some(view) = state::content_webview(app, id) {
+        if (zoom - 1.0).abs() > f64::EPSILON {
+            let _ = view.raw().set_zoom(zoom);
+        }
+        if muted {
+            let _ = view.eval(&format!("{MUTE_SCRIPT}(true);"));
+        }
+    }
+    // Auto-fill happens only for hosts with a saved login (keychain
+    // lookup); values land in the form, the submit stays with the user.
+    if let Some(host) = host {
+        let Ok(entry) = state.secrets.get(&format!("pw:{host}")) else {
+            return;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&entry) else {
+            return;
+        };
+        let (Some(user), Some(pass)) = (
+            parsed.get("user").and_then(|v| v.as_str()),
+            parsed.get("pass").and_then(|v| v.as_str()),
+        ) else {
+            return;
+        };
+        if let Some(view) = state::content_webview(app, id) {
+            let _ = view.eval(&format!(
+                "{}({}, {});",
+                crate::commands::FILL_PW_SCRIPT,
+                serde_json::to_string(user).unwrap_or_default(),
+                serde_json::to_string(pass).unwrap_or_default(),
+            ));
+        }
+    }
+}
+
 fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool) {
     let state = app.state::<BrowserState>();
     {
@@ -135,6 +254,7 @@ fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool)
             drop(model);
             arm_loading_watchdog(app, id);
             emit_tabs(app);
+            notify_tabs_event(app, "tabs.onUpdated", serde_json::json!({ "id": id.0, "changeInfo": { "loading": true } }));
             return;
         }
         model.set_loading(id, false);
@@ -152,22 +272,34 @@ fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool)
             }
         }
     }
+    // A fresh document resets page zoom and element mute state; restore
+    // the tab's recorded settings before the user sees the page.
+    reapply_tab_media(app, id);
     // WKContentRuleList installs must wait for the first finished load
     // (the controller's proxy is null before the page initializes).
     crate::filters::tab_loaded(app, id);
     emit_tabs(app);
+    notify_tabs_event(app, "tabs.onUpdated", serde_json::json!({ "id": id.0, "changeInfo": { "loading": false, "status": "complete" } }));
 }
 
 fn title_update(app: &AppHandle, id: TabId, title: String) {
     let state = app.state::<BrowserState>();
-    state::lock(&state.model).set_title(id, title);
+    let tab_url = state::lock(&state.model).get(id).and_then(|t| t.url.clone());
+    state::lock(&state.model).set_title(id, title.clone());
+    // History rows are written at commit (before the document title
+    // exists); backfill the newest row so history shows real titles.
+    if let Some(u) = tab_url {
+        let _ = state::lock(&state.db).history_set_title(&u, &title);
+    }
     emit_tabs(app);
+    notify_tabs_event(app, "tabs.onUpdated", serde_json::json!({ "id": id.0, "changeInfo": { "title": title } }));
 }
 
 #[cfg(desktop)]
 fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<Url>) {
     let state = app.state::<BrowserState>();
     let is_active = state::lock(&state.model).active_id() == Some(id);
+    let tab_incognito = state::lock(&state.model).get(id).map(|t| t.incognito).unwrap_or(false);
     let label = content_label(id);
     let webview_url = match &url {
         Some(u) => tauri::WebviewUrl::External(u.clone()),
@@ -185,6 +317,9 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     let nav_tab = id;
     let builder = tauri::webview::WebviewBuilder::new(&label, webview_url)
         .initialization_script(crate::content_bridge::bootstrap_script(&token))
+        // Private tabs get a real ephemeral data store (nonPersistent on
+        // macOS): cookies and web storage never touch the main profile.
+        .incognito(tab_incognito)
         .on_download(move |_wv, event| {
             use tauri::Emitter;
             match event {
@@ -283,6 +418,7 @@ pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> 
     let _ = state::lock(&state.db).delete_tab(id);
     persist_session(app);
     emit_tabs(app);
+    notify_tabs_event(app, "tabs.onRemoved", serde_json::json!({ "id": id.0 }));
     Ok(())
 }
 
@@ -300,6 +436,7 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
         }
     }
     emit_tabs(app);
+    notify_tabs_event(app, "tabs.onActivated", serde_json::json!({ "id": id.0 }));
     Ok(())
 }
 
@@ -378,23 +515,31 @@ fn exit_split_on_activate(state: &BrowserState, id: TabId) {
 }
 
 fn search_url(app: &AppHandle, query: &str) -> Url {
-    let engine = {
+    let (engine, custom) = {
         let state = app.state::<BrowserState>();
         let db = state::lock(&state.db);
-        let value = db.ext_kv_get("sys", "setting:search_engine").ok().flatten();
-        value.unwrap_or_else(|| "duckduckgo".into())
+        let engine = db.ext_kv_get("sys", "setting:search_engine").ok().flatten();
+        let custom = db.ext_kv_get("sys", "setting:search_engine_custom").ok().flatten();
+        (engine.unwrap_or_else(|| "duckduckgo".into()), custom)
     };
-    let base = match engine.as_str() {
-        "google" => "https://www.google.com/search",
-        "bing" => "https://www.bing.com/search",
-        _ => "https://duckduckgo.com/",
-    };
-    Url::parse_with_params(base, &[("q", query)]).unwrap_or_else(|_| state::home_url())
+    match urlbox::search_url(&engine, custom.as_deref(), query) {
+        OmniboxResult::Navigate(u) => u,
+        // A broken custom template falls back to the default engine so the
+        // omnibox still searches somewhere.
+        OmniboxResult::Search(q) => match urlbox::search_url("duckduckgo", None, &q) {
+            OmniboxResult::Navigate(u) => u,
+            OmniboxResult::Search(_) => state::home_url(),
+        },
+    }
 }
 
 pub fn persist_session(app: &AppHandle) {
     let state = app.state::<BrowserState>();
     let model = state::lock(&state.model);
+    let split = *state::lock(&state.split);
+    // Map tab id -> persisted position; split members survive the restart
+    // as positions, since tab ids are reissued on restore.
+    let mut positions = std::collections::HashMap::new();
     let db_result = (|| -> Result<(), surf_core::storage::StorageError> {
         let db = state::lock(&state.db);
         db.clear_tabs()?;
@@ -404,14 +549,43 @@ pub fn persist_session(app: &AppHandle) {
             if tab.incognito {
                 continue;
             }
+            positions.insert(tab.id, position);
             db.save_tab(position, tab)?;
             position += 1;
+        }
+        if let Some((a, b)) = split {
+            if let (Some(pa), Some(pb)) = (positions.get(&a), positions.get(&b)) {
+                let json = serde_json::to_string(&[pa, pb]).unwrap_or_default();
+                let _ = db.ext_kv_set("sys", "session:split", &json);
+            } else {
+                // A private (unpersisted) member cannot restore; drop it.
+                let _ = db.ext_kv_set("sys", "session:split", "");
+            }
+        } else {
+            let _ = db.ext_kv_set("sys", "session:split", "");
         }
         Ok(())
     })();
     if let Err(e) = db_result {
         eprintln!("session persist failed: {e}");
     }
+}
+
+/// Restore the persisted split (positions from `persist_session`) onto the
+/// freshly reissued tab ids. Returns the split pair when both survive.
+pub fn restore_split(state: &BrowserState, id_by_position: &std::collections::HashMap<usize, TabId>) -> Option<(TabId, TabId)> {
+    let raw = state::lock(&state.db)
+        .ext_kv_get("sys", "session:split")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let pair: Vec<usize> = serde_json::from_str(&raw).ok()?;
+    if pair.len() != 2 {
+        return None;
+    }
+    let (a, b) = (*id_by_position.get(&pair[0])?, *id_by_position.get(&pair[1])?);
+    *state::lock(&state.split) = Some((a, b));
+    Some((a, b))
 }
 
 // Mobile instance-swap: one WebviewWindow per tab. Tauri mobile supports
@@ -473,6 +647,11 @@ pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
     let _ = ensure_tab_window(app, id, url);
     persist_session(app);
     emit_tabs(app);
+    notify_tabs_event(
+        app,
+        "tabs.onCreated",
+        serde_json::to_value(state::lock(&app.state::<BrowserState>().model).get(id)).unwrap_or(serde_json::Value::Null),
+    );
     id
 }
 
@@ -498,6 +677,7 @@ pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::Command
     }
     persist_session(app);
     emit_tabs(app);
+    notify_tabs_event(app, "tabs.onRemoved", serde_json::json!({ "id": id.0 }));
     Ok(())
 }
 
@@ -522,6 +702,7 @@ pub fn activate_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::Comm
         }
     }
     emit_tabs(app);
+    notify_tabs_event(app, "tabs.onActivated", serde_json::json!({ "id": id.0 }));
     Ok(())
 }
 
@@ -556,7 +737,8 @@ mod tests {
     #[test]
     fn closed_tab_is_captured_before_removal_and_privates_are_skipped() {
         let db = surf_core::storage::Db::open(":memory:").unwrap();
-        let state = BrowserState::new(db);
+        let dir = std::env::temp_dir().join(format!("surf-test-favicons-{}", std::process::id()));
+        let state = BrowserState::new(db, dir);
         let url = Url::parse("https://closed.example/").unwrap();
         let normal = state::lock(&state.model).open(Some(url.clone()));
         let private = state::lock(&state.model).open_private(Some(url.clone()));

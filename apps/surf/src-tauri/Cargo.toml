@@ -23,6 +23,9 @@ surf-ext-host = { workspace = true }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 rand = "0.8"
 security-framework = "3"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+security-framework-sys = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 

@@ -1,11 +1,20 @@
 <script lang="ts">
   import { ui } from "../ui.svelte";
+  import { bookmarksRemove } from "../ipc";
   import Icon from "./Icon.svelte";
 
   function go(url: string) {
     // Reuse the omnibox path by closing the panel and navigating.
     ui.panel = null;
     window.dispatchEvent(new CustomEvent("surf:navigate", { detail: url }));
+  }
+
+  async function remove(url: string) {
+    try {
+      ui.bookmarks = await bookmarksRemove(url);
+    } catch (e) {
+      console.error(String(e));
+    }
   }
 </script>
 
@@ -17,6 +26,14 @@
         <button class="row" onclick={() => go(b.url)}>
           <span class="title">{b.title ?? b.url}</span>
           <span class="url">{b.url}</span>
+        </button>
+        <button
+          class="remove"
+          onclick={() => void remove(b.url)}
+          aria-label={`刪除書籤 ${b.title ?? b.url}`}
+          title="刪除書籤"
+        >
+          <Icon name="close" />
         </button>
       </li>
     {:else}
@@ -36,37 +53,63 @@
     margin: 0;
     padding: 0;
   }
+  li {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
   .row {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
+    flex: 1;
+    min-width: 0;
     width: 100%;
     min-height: 44px;
-    padding: 6px 10px;
+    padding: 5px 10px;
     border-radius: 6px;
     text-align: left;
   }
-  .row:hover {
+  .row:hover,
+  .row:active {
     background: var(--hover);
   }
   .title {
-    font-size: 13px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 100%;
+    font-size: 13px;
   }
   .url {
-    font-size: 11px;
-    color: var(--text-secondary);
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 100%;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .remove {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+  }
+  .remove:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+  .remove :global(svg) {
+    width: 11px;
+    height: 11px;
   }
   .empty {
     color: var(--text-secondary);
     padding: 8px 0;
+    font-size: 13px;
   }
 </style>

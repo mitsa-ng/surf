@@ -89,6 +89,15 @@ impl ExtRuntime {
                     surfEmit("__api", JSON.stringify({ id, module, method, args: args === undefined ? null : args }));
                   })
                 };
+                // Chrome-shaped tabs events: the host broadcasts
+                // "tabs.onXxx" events (gated on the tabs API grant).
+                const tabsEvent = (name) => ({ addListener: (fn) => surf.addListener("tabs." + name, fn) });
+                surf.tabs = {
+                  onCreated: tabsEvent("onCreated"),
+                  onRemoved: tabsEvent("onRemoved"),
+                  onActivated: tabsEvent("onActivated"),
+                  onUpdated: tabsEvent("onUpdated")
+                };
                 globalThis.__surfDispatch = (name, payload) => {
                   if (name.startsWith("__apiResult:")) {
                     const id = name.slice("__apiResult:".length);
@@ -197,6 +206,28 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].name, "echo:ping");
         assert_eq!(out[0].payload, "42");
+    }
+
+    #[test]
+    fn tabs_event_namespaces_reach_listeners() {
+        let rt = ExtRuntime::new(ExtensionId("test".into()), RuntimeLimits::default()).unwrap();
+        rt.eval(
+            r#"
+            var seen = [];
+            surf.tabs.onUpdated.addListener((payload) => { const p = JSON.parse(payload); seen.push("u:" + p.changeInfo.title); });
+            surf.tabs.onCreated.addListener(() => { seen.push("c"); });
+            "#,
+        )
+        .unwrap();
+        assert!(rt.dispatch_event("tabs.onCreated", &serde_json::json!({ "id": 1 })).unwrap());
+        assert!(rt
+            .dispatch_event("tabs.onUpdated", &serde_json::json!({ "id": 1, "changeInfo": { "title": "Hi" } }))
+            .unwrap());
+        rt.eval(r#"surfEmit("probe", JSON.stringify(seen))"#).unwrap();
+        let out = rt.drain_outgoing();
+        let probe = out.iter().find(|m| m.name == "probe").expect("probe");
+        assert!(probe.payload.contains("\"c\""), "{probe:?}");
+        assert!(probe.payload.contains("u:Hi"), "{probe:?}");
     }
 
     #[test]

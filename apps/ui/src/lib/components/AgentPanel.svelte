@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { setAgentPanelOpen } from "../agent.svelte";
+  import { setAgentPanelOpen, sendAgentAction } from "../agent.svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
 
   // One agent turn per panel mount: the MessageProcessor and the event
@@ -24,6 +24,12 @@
         const processor = new MessageProcessor([lit.basicCatalog]);
         processor.onSurfaceCreated((s) => {
           surface = s;
+          // The action loop: a2ui Buttons dispatch here; Rust routes the
+          // event name and context (e.g. activate_tab) to real commands.
+          type Action = { name?: string; context?: Record<string, unknown> };
+          s.onAction?.subscribe?.((action: Action) => {
+            if (action?.name) sendAgentAction(action.name, action.context ?? {});
+          });
         });
         processor.onSurfaceDeleted(() => {
           surface = undefined;

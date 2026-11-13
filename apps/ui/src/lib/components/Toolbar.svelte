@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tabs, navigateActive, historyAction, stopLoading } from "../tabs.svelte";
-  import { ui, toggleBookmark, isBookmarked } from "../ui.svelte";
+  import { ui, toggleBookmark, isBookmarked, searchEngineLabel } from "../ui.svelte";
   import { displayAddress } from "../format";
+  import { suggest } from "../ipc";
   import Icon from "./Icon.svelte";
   import PageActions from "./PageActions.svelte";
 
@@ -9,6 +10,8 @@
   let focused = $state(false);
   let highlight = $state(-1);
   let inputEl: HTMLInputElement | undefined = $state();
+  let live = $state<string[]>([]);
+  let suggestTimer: ReturnType<typeof setTimeout> | undefined;
   const privateMode = $derived(activeTab()?.incognito ?? false);
   const loading = $derived(activeTab()?.loading ?? false);
 
@@ -29,12 +32,34 @@
 
   type Entry = { kind: "search"; q: string } | { kind: "url"; url: string; title: string; source: "bookmark" | "history" };
 
+  // Live engine suggestions arrive async (debounced); local rows are
+  // always present so the dropdown never waits on the network.
+  $effect(() => {
+    const q = input.trim();
+    if (!q || !focused || !ui.suggestLive) {
+      live = [];
+      return;
+    }
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(() => {
+      void suggest(q)
+        .then((rows) => (live = rows))
+        .catch(() => (live = []));
+    }, 150);
+  });
+
   const suggestions = $derived.by(() => {
     const q = input.trim();
     if (!q || !focused) return [] as Entry[];
     const needle = q.toLowerCase();
     const seen = new Set<string>();
     const out: Entry[] = [{ kind: "search", q }];
+    // Chrome's order: engine suggestions, then bookmarks, then history.
+    for (const s of live) {
+      if (s.toLowerCase() === needle || seen.has(s)) continue;
+      seen.add(s);
+      out.push({ kind: "search", q: s });
+    }
     const hits = (rows: { url: string; title: string | null }[], source: "bookmark" | "history") => {
       for (const r of rows) {
         if (seen.has(r.url)) continue;
@@ -183,7 +208,7 @@
               {#if s.kind === "search"}
                 <span class="source"><Icon name="search" /></span>
                 <span class="title">{#each segments(s.q, input.trim()) as seg}{#if seg.hit}<mark>{seg.t}</mark>{:else}{seg.t}{/if}{/each}</span>
-                <span class="url">Google 搜尋</span>
+                <span class="url">{searchEngineLabel()} 搜尋</span>
               {:else}
                 <span class="source"><Icon name={s.source === "bookmark" ? "star" : "history"} /></span>
                 <span class="title">{#each segments(s.title, input.trim()) as seg}{#if seg.hit}<mark>{seg.t}</mark>{:else}{seg.t}{/if}{/each}</span>

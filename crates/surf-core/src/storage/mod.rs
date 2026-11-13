@@ -41,10 +41,29 @@ const MIGRATIONS: &[&str] = &[
     );",
     // v3: pinned tab flag
     "ALTER TABLE tabs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+    // v4: persisted download history
+    "CREATE TABLE downloads (
+        url TEXT NOT NULL,
+        path TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        success INTEGER NOT NULL,
+        at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_downloads_at ON downloads(at DESC);",
 ];
 
 pub struct Db {
     conn: Connection,
+}
+
+/// One persisted download row (the downloads table).
+#[derive(Debug)]
+pub struct DownloadRow {
+    pub url: String,
+    pub path: String,
+    pub filename: String,
+    pub success: bool,
+    pub at: i64,
 }
 
 impl Db {
@@ -104,6 +123,8 @@ impl Db {
                 loading: false,
                 incognito: false,
                 pinned: pinned != 0,
+                zoom: 1.0,
+                muted: false,
                 can_back: false,
                 can_forward: false,
             })
@@ -138,6 +159,76 @@ impl Db {
             .into_iter()
             .filter_map(|(u, t, ts)| Url::parse(&u).ok().map(|u| (u, t, ts)))
             .collect())
+    }
+
+    /// History rows matching a substring in url or title, newest first.
+    pub fn history_search(&self, needle: &str, limit: usize) -> Result<Vec<(Url, Option<String>, i64)>> {
+        let pattern = format!("%{}%", needle.replace('%', "\\%").replace('_', "\\_"));
+        let mut stmt = self.conn.prepare(
+            "SELECT url, title, visited_at FROM history
+             WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
+             ORDER BY visited_at DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], |row| {
+            let url: String = row.get(0)?;
+            let title: Option<String> = row.get(1)?;
+            let visited_at: i64 = row.get(2)?;
+            Ok((url, title, visited_at))
+        })?;
+        Ok(rows
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter_map(|(u, t, ts)| Url::parse(&u).ok().map(|u| (u, t, ts)))
+            .collect())
+    }
+
+    /// Remove one history row, identified by url and visit timestamp.
+    /// Returns whether a row was removed.
+    pub fn delete_history_row(&self, url: &Url, visited_at: i64) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM history WHERE url = ?1 AND visited_at = ?2",
+            params![url.as_str(), visited_at],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The document title arrives after the visit was recorded; backfill
+    /// the newest row for that url so history lists show real titles.
+    pub fn history_set_title(&self, url: &Url, title: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE history SET title = ?1
+             WHERE url = ?2 AND visited_at = (
+                 SELECT MAX(visited_at) FROM history WHERE url = ?2
+             )",
+            params![title, url.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Append a finished download (persistence for the downloads panel).
+    pub fn save_download(&self, url: &str, path: &str, filename: &str, success: bool, at: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO downloads (url, path, filename, success, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![url, path, filename, success as i64, at],
+        )?;
+        Ok(())
+    }
+
+    /// Persisted downloads, newest first, bounded like the in-memory list.
+    pub fn downloads_all(&self, limit: usize) -> Result<Vec<DownloadRow>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT url, path, filename, success, at FROM downloads ORDER BY at DESC LIMIT ?1")?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(DownloadRow {
+                url: row.get(0)?,
+                path: row.get(1)?,
+                filename: row.get(2)?,
+                success: row.get::<_, i64>(3)? != 0,
+                at: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn add_bookmark(&self, url: &Url, title: Option<&str>) -> Result<()> {
@@ -212,10 +303,12 @@ mod tests {
             loading: false,
             incognito: false,
             pinned: false,
+            zoom: 1.0,
+            muted: false,
             can_back: false,
             can_forward: false,
         };
-        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false, pinned: false, can_back: false, can_forward: false };
+        let t2 = TabState { id: TabId(2), url: None, title: None, loading: false, incognito: false, pinned: false, zoom: 1.0, muted: false, can_back: false, can_forward: false };
         db.save_tab(0, &t1).unwrap();
         db.save_tab(1, &t2).unwrap();
         let mut t3 = TabState {
@@ -225,6 +318,8 @@ mod tests {
             loading: false,
             incognito: false,
             pinned: true,
+            zoom: 1.0,
+            muted: false,
             can_back: false,
             can_forward: false,
         };
@@ -292,6 +387,67 @@ mod tests {
         assert_eq!(db.bookmarks().unwrap()[0].1.as_deref(), Some("new"));
         db.remove_bookmark(&u).unwrap();
         assert!(db.bookmarks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn history_title_backfills_newest_row_only() {
+        let db = Db::open(":memory:").unwrap();
+        let u = Url::parse("https://t.example/").unwrap();
+        db.record_visit(&u, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        db.record_visit(&u, None).unwrap();
+        // The title arrives once, after the second visit.
+        db.history_set_title(&u, "Real Title").unwrap();
+        let rows = db.history_recent(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].1.as_deref(), Some("Real Title"));
+        assert_eq!(rows[1].1, None, "older visit keeps its null title");
+    }
+
+    #[test]
+    fn history_search_matches_url_and_title_with_escapes() {
+        let db = Db::open(":memory:").unwrap();
+        let a = Url::parse("https://a.example/docs").unwrap();
+        let b = Url::parse("https://b.example/x").unwrap();
+        db.record_visit(&a, None).unwrap();
+        db.record_visit(&b, Some("Docs Home 100%")).unwrap();
+        let by_url = db.history_search("a.example", 10).unwrap();
+        assert_eq!(by_url.len(), 1);
+        assert_eq!(by_url[0].0, a);
+        let by_title = db.history_search("docs", 10).unwrap();
+        assert_eq!(by_title.len(), 2, "LIKE is case-insensitive by default");
+        // A literal percent is a literal, not a wildcard.
+        let pct = db.history_search("100%", 10).unwrap();
+        assert_eq!(pct.len(), 1);
+        assert_eq!(pct[0].0, b);
+    }
+
+    #[test]
+    fn history_delete_removes_exactly_one_row() {
+        let db = Db::open(":memory:").unwrap();
+        let u = Url::parse("https://d.example/").unwrap();
+        db.record_visit(&u, None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        db.record_visit(&u, None).unwrap();
+        let rows = db.history_recent(10).unwrap();
+        let (_, _, newest_ts) = rows[0];
+        assert!(db.delete_history_row(&u, newest_ts).unwrap());
+        assert!(!db.delete_history_row(&u, newest_ts).unwrap(), "second delete finds nothing");
+        assert_eq!(db.history_recent(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn downloads_roundtrip_newest_first() {
+        let db = Db::open(":memory:").unwrap();
+        db.save_download("https://a/x.bin", "/tmp/x.bin", "x.bin", true, 100).unwrap();
+        db.save_download("https://a/y.bin", "/tmp/y.bin", "y.bin", false, 200).unwrap();
+        let rows = db.downloads_all(100).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].url, "https://a/y.bin");
+        assert!(!rows[0].success);
+        assert!(rows[1].success);
+        // The bound behaves like the in-memory list cap.
+        assert_eq!(db.downloads_all(1).unwrap().len(), 1);
     }
 }
 

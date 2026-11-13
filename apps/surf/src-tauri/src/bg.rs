@@ -204,4 +204,7 @@ impl BgRegistry {
         self.threads.get(id).map(|h| h.tx.clone())
     }
 
+    pub fn ids(&self) -> Vec<ExtensionId> {
+        self.threads.keys().cloned().collect()
+    }
 }

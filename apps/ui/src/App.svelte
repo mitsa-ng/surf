@@ -1,19 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { init, openTab, openIncognito, reopenClosed, setPinned, closeTab, activateTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
+  import { init, openTab, openIncognito, reopenClosed, closeTab, activateTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
   import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
-  import { deeplinkTake, overlaySetOpen, panelSetOpen, splitClear, splitSet } from "./lib/ipc";
+  import { deeplinkTake, overlaySetOpen, panelSetOpen, tabZoom } from "./lib/ipc";
+  import { runInternalCommand } from "./lib/internal";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import BookmarksBar from "./lib/components/BookmarksBar.svelte";
   import FindBar from "./lib/components/FindBar.svelte";
+  import PasswordPrompt from "./lib/components/PasswordPrompt.svelte";
   import TabSearch from "./lib/components/TabSearch.svelte";
   import TabMenu from "./lib/components/TabMenu.svelte";
   import BottomBar from "./lib/components/BottomBar.svelte";
   import TabSheet from "./lib/components/TabSheet.svelte";
   import Panel from "./lib/components/Panel.svelte";
+  import HelpDialog from "./lib/components/HelpDialog.svelte";
 
   const isMobile = isMobileDevice();
   let toolbar: Toolbar | undefined = $state();
@@ -26,38 +29,17 @@
   });
 
   // Any chrome overlay (tab menu, tab search, address suggestions, find
-  // bar) needs the chrome webview to extend below the chrome stack, above
-  // content. While the chrome covers more than its stack, its body must
-  // be transparent so the page stays visible underneath.
+  // bar, help dialog, password prompt) needs the chrome webview to extend
+  // below the chrome stack, above content. While the chrome covers more
+  // than its stack, its body must be transparent so the page stays
+  // visible underneath.
   $effect(() => {
     if (isMobile) return;
-    const overlay = ui.tabMenu !== null || ui.tabSearchOpen || ui.suggestOpen || ui.findOpen;
+    const overlay =
+      ui.tabMenu !== null || ui.tabSearchOpen || ui.suggestOpen || ui.findOpen || ui.help !== null || ui.pwPrompt !== null;
     document.body.classList.toggle("chrome-expanded", ui.panel !== null || overlay);
     void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
   });
-
-  // surf:// deep links map onto normal actions; shared by the runtime
-  // event and the cold-start launch URL.
-  function handleDeepLink(raw: string) {
-    const url = String(raw);
-    if (url === "surf://settings") togglePanel("settings");
-    else if (url === "surf://private") void openIncognito();
-    else if (url === "surf://pin") {
-      const id = tabs.activeId;
-      const tab = tabs.list.find((t) => t.id === id);
-      if (id !== null && tab) void setPinned(id, !tab.pinned);
-    } else if (url === "surf://reopen") void reopenClosed();
-    else if (url === "surf://split") {
-      const active = tabs.activeId;
-      const other = tabs.list.find((t) => t.id !== active && !t.incognito)?.id ?? null;
-      if (active !== null && other !== null) void splitSet(active, other).catch(console.error);
-    } else if (url === "surf://unsplit") void splitClear().catch(console.error);
-    else if (url === "surf://tabs") toggleTabSearch();
-    else if (url.startsWith("surf://open?url=")) {
-      const target = decodeURIComponent(url.slice("surf://open?url=".length));
-      void navigateActive(target);
-    }
-  }
 
   onMount(() => {
     void init();
@@ -73,11 +55,34 @@
           case "surf.new-tab":
             void openTab();
             break;
+          case "surf.new-private":
+            void openIncognito();
+            break;
+          case "surf.reopen-tab":
+            void reopenClosed();
+            break;
           case "surf.close-tab":
             if (tabs.activeId !== null) void closeTab(tabs.activeId);
             break;
           case "surf.reload":
             void historyAction("reload");
+            break;
+          case "surf.downloads":
+            togglePanel("downloads");
+            break;
+          case "surf.tab-search":
+            toggleTabSearch();
+            break;
+          case "surf.bookmarks-bar":
+            toggleBookmarksBar();
+            break;
+          case "surf.zoom-in":
+          case "surf.zoom-out":
+          case "surf.zoom-reset":
+            if (tabs.activeId !== null) {
+              const mode = e.payload === "surf.zoom-in" ? "in" : e.payload === "surf.zoom-out" ? "out" : "reset";
+              void tabZoom(tabs.activeId, mode).catch(console.error);
+            }
             break;
           case "surf.bookmarks":
             togglePanel("bookmarks");
@@ -94,9 +99,15 @@
           case "surf.find":
             toggleFind();
             break;
+          case "surf.shortcuts":
+            ui.help = "shortcuts";
+            break;
+          case "surf.about":
+            ui.help = "about";
+            break;
         }
       }),
-      listen<string>("deeplink://open", (e) => handleDeepLink(e.payload)),
+      listen<string>("deeplink://open", (e) => runInternalCommand(e.payload)),
     ];
     // A deep link that arrived before this UI mounted (CLI launch with a
     // URL) is queued Rust-side; take it once the tab model exists.
@@ -104,7 +115,7 @@
       try {
         await init();
         const queued = await deeplinkTake();
-        if (queued) handleDeepLink(queued);
+        if (queued) runInternalCommand(queued);
       } catch (e) {
         console.error(String(e));
       }
@@ -166,7 +177,7 @@
       {#if tabs.list.length === 0}
         <p>沒有分頁。點下方分頁按鈕新增。</p>
       {:else}
-        <p class="mobile-note">分頁清單已啟用；每個分頁的內容 webview 在 M3 接上。</p>
+        <p class="mobile-note">分頁內容以每分頁視窗呈現；作用分頁：</p>
         <p class="mobile-url">{activeUrl ?? "（空白分頁）"}</p>
       {/if}
       {#if tabs.error}
@@ -183,10 +194,12 @@
       <BookmarksBar />
     {/if}
     <FindBar />
+    <PasswordPrompt />
     <TabSearch />
     <TabMenu />
   </header>
   <Panel />
+  <HelpDialog />
   <!-- Content webviews are native children positioned below this chrome;
        nothing renders here. -->
 {/if}

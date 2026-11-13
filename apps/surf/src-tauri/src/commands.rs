@@ -49,7 +49,7 @@ pub fn tab_open_incognito(app: AppHandle) -> Result<TabsSnapshot, crate::Command
     {
         let id = {
             let state = app.state::<BrowserState>();
-            let model = state::lock(&state.model);
+            let mut model = state::lock(&state.model);
             model.open_private(None)
         };
         let _ = crate::manager::ensure_tab_window(&app, id, None);
@@ -69,6 +69,7 @@ pub fn tab_set_pinned(app: AppHandle, id: u64, pinned: bool) -> Result<TabsSnaps
         .ok_or(crate::CommandError::UnknownTab(id))?;
     drop(model);
     crate::manager::persist_session(&app);
+    crate::manager::notify_tabs_event(&app, "tabs.onUpdated", serde_json::json!({ "id": id, "changeInfo": { "pinned": pinned } }));
     Ok(snapshot(&app))
 }
 
@@ -249,9 +250,58 @@ pub fn tab_stop(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
     }
     #[cfg(mobile)]
     {
-        let _ = (&app, &id);
+        let _ = (app, id);
     }
     Ok(())
+}
+
+/// Page zoom: "in" steps ×1.25, "out" ÷1.25, "reset" returns to 100%.
+/// The value is clamped in the model and re-applied after every load.
+#[tauri::command]
+pub fn tab_zoom(app: AppHandle, id: u64, mode: String) -> Result<TabsSnapshot, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let next = {
+        let mut model = state::lock(&state.model);
+        let tab = model.get(TabId(id)).ok_or(crate::CommandError::UnknownTab(id))?;
+        let next = match mode.as_str() {
+            "in" => tab.zoom * 1.25,
+            "out" => tab.zoom / 1.25,
+            _ => 1.0,
+        };
+        model.set_zoom(TabId(id), next).ok_or(crate::CommandError::UnknownTab(id))?
+    };
+    #[cfg(desktop)]
+    if let Some(view) = state::content_webview(&app, TabId(id)) {
+        let _ = view.raw().set_zoom(next);
+    }
+    #[cfg(mobile)]
+    let _ = &state;
+    crate::manager::notify_tabs_event(&app, "tabs.onUpdated", serde_json::json!({ "id": id, "changeInfo": { "zoom": next } }));
+    Ok(snapshot(&app))
+}
+
+/// Mute or unmute a tab's audio. The webview platform exposes no native
+/// mute (probed on macOS 27.2), so this drives the page's media elements
+/// through the manager's mute script; the flag re-applies after loads.
+#[tauri::command]
+pub fn tab_set_muted(app: AppHandle, id: u64, muted: bool) -> Result<TabsSnapshot, crate::CommandError> {
+    {
+        let state = app.state::<BrowserState>();
+        state::lock(&state.model)
+            .set_muted(TabId(id), muted)
+            .then_some(())
+            .ok_or(crate::CommandError::UnknownTab(id))?;
+        #[cfg(desktop)]
+        if let Some(view) = state::content_webview(&app, TabId(id)) {
+            let _ = view.eval(&format!("{}({});", crate::manager::MUTE_SCRIPT, muted));
+        }
+        #[cfg(mobile)]
+        if let Some(w) = app.get_webview_window(&crate::manager::content_label(TabId(id))) {
+            let _ = w.eval(format!("{}({});", crate::manager::MUTE_SCRIPT, muted));
+        }
+    }
+    crate::manager::notify_tabs_event(&app, "tabs.onUpdated", serde_json::json!({ "id": id, "changeInfo": { "muted": muted } }));
+    Ok(snapshot(&app))
 }
 
 /// The chrome UI takes the cold-start deep link once its tab model is
@@ -565,6 +615,29 @@ pub fn cs_send(
         let _ = app.emit_to(crate::layout::CHROME_LABEL, "find://count", serde_json::json!({ "tab": id.0, "count": count }));
         return Ok(());
     }
+    // Login form submitted: hold the pair (host comes from the tab's real
+    // url, never from the page payload) and ask the chrome whether to
+    // save. The password itself never crosses into the chrome webview.
+    if name == "pw://submit" {
+        let user = payload.get("user").and_then(|v| v.as_str()).unwrap_or("").trim().to_owned();
+        let pass = payload.get("pass").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+        let host = {
+            let model = state::lock(&state.model);
+            model
+                .get(id)
+                .and_then(|t| t.url.clone())
+                .and_then(|u| u.host_str().map(str::to_owned))
+        };
+        let Some(host) = host.filter(|h| !h.is_empty()) else {
+            return Ok(());
+        };
+        if user.is_empty() || pass.is_empty() {
+            return Ok(());
+        }
+        *state::lock(&state.pending_pw) = Some(crate::state::PendingPassword { host: host.clone(), user: user.clone(), password: pass });
+        let _ = app.emit_to(crate::layout::CHROME_LABEL, "pw://prompt", serde_json::json!({ "host": host, "user": user }));
+        return Ok(());
+    }
     // New-tab page: submit the central search box through the normal
     // navigation pipeline (search terms resolve via the omnibox rules).
     if name == "ntp://search" {
@@ -602,6 +675,46 @@ pub fn cs_send(
                 .take(6)
                 .collect();
             crate::content_bridge::send_to_tab(&app, id, "ntp://sites", &serde_json::json!({ "sites": sites }));
+            // Favicons fetch off-thread; push the tiles again once they
+            // resolve so first paint stays instant.
+            let prefetch_handle = app.clone();
+            let prefetch_sites: Vec<(String, String, String)> = sites
+                .iter()
+                .filter_map(|s| {
+                    let url = s.get("url")?.as_str()?.to_owned();
+                    let host = s.get("host")?.as_str()?.to_owned();
+                    let title = s.get("title")?.as_str()?.to_owned();
+                    Some((url, host, title))
+                })
+                .collect();
+            std::thread::spawn(move || {
+                let mut updated = false;
+                let enriched: Vec<serde_json::Value> = prefetch_sites
+                    .into_iter()
+                    .map(|(url, host, title)| {
+                        let favicon = url::Url::parse(&url)
+                            .ok()
+                            .and_then(|u| crate::favicon::lookup(&prefetch_handle, &u));
+                        if favicon.is_some() {
+                            updated = true;
+                        }
+                        serde_json::json!({
+                            "host": host,
+                            "url": url,
+                            "title": title,
+                            "favicon": favicon,
+                        })
+                    })
+                    .collect();
+                if updated {
+                    crate::content_bridge::send_to_tab(
+                        &prefetch_handle,
+                        id,
+                        "ntp://sites",
+                        &serde_json::json!({ "sites": enriched }),
+                    );
+                }
+            });
         }
         return Ok(());
     }
@@ -623,6 +736,33 @@ pub fn history_clear(app: AppHandle) -> Result<usize, crate::CommandError> {
     let state = app.state::<BrowserState>();
     let db = state::lock(&state.db);
     db.clear_history().map_err(|e| crate::CommandError::Message(e.to_string()))
+}
+
+/// Remove one history row (per-item delete in the history panel).
+#[tauri::command]
+pub fn history_delete(app: AppHandle, url: String, visited_at: i64) -> Result<bool, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let parsed = url::Url::parse(&url).map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    let db = state::lock(&state.db);
+    db.delete_history_row(&parsed, visited_at)
+        .map_err(|e| crate::CommandError::Message(e.to_string()))
+}
+
+/// History rows matching a substring in url or title.
+#[tauri::command]
+pub fn history_search(app: AppHandle, query: String) -> Result<Vec<HistoryRow>, crate::CommandError> {
+    let needle = query.trim().to_owned();
+    if needle.is_empty() {
+        return history_recent(app, Some(100));
+    }
+    let state = app.state::<BrowserState>();
+    let rows = state::lock(&state.db)
+        .history_search(&needle, 100)
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?
+        .into_iter()
+        .map(|(u, t, ts)| HistoryRow { url: u.to_string(), title: t, visited_at: ts })
+        .collect();
+    Ok(rows)
 }
 
 /// One finished download, shown in the downloads panel.
@@ -648,6 +788,13 @@ pub fn record_download(app: &AppHandle, url: &str, path: Option<&std::path::Path
         at: surf_core::tabs::now_ms_helper(),
     };
     let state = app.state::<BrowserState>();
+    // Persist alongside the in-memory list so the panel survives restarts.
+    {
+        let db = state::lock(&state.db);
+        if let Err(e) = db.save_download(&record.url, &record.path, &record.filename, record.success, record.at) {
+            eprintln!("download persist failed: {e}");
+        }
+    }
     let mut downloads = state::lock(&state.downloads);
     downloads.insert(0, record);
     downloads.truncate(100);
@@ -758,6 +905,83 @@ pub fn settings_get(app: AppHandle, key: String) -> Result<Option<String>, crate
         .ext_kv_get("sys", &format!("setting:{key}"))
         .map_err(|e| crate::CommandError::Message(e.to_string()))?;
     Ok(value)
+}
+
+/// Parse the OpenSearch-style suggest payload (`[query, [s1, s2, …]]`)
+/// shared by Google/DDG/Bing endpoints.
+pub fn parse_suggest(body: &str) -> Vec<String> {
+    let value: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    value
+        .as_array()
+        .and_then(|a| a.get(1))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|i| i.as_str().map(str::to_owned))
+                .filter(|s| !s.trim().is_empty())
+                .take(5)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Live search suggestions from the configured engine (known engines
+/// only; a custom engine has no known endpoint and returns none). Can be
+/// turned off with setting:suggest_live = "0".
+#[tauri::command]
+pub fn suggest(app: AppHandle, query: String) -> Result<Vec<String>, crate::CommandError> {
+    let q = query.trim().to_owned();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (engine, enabled) = {
+        let state = app.state::<BrowserState>();
+        let db = state::lock(&state.db);
+        let engine = db.ext_kv_get("sys", "setting:search_engine").ok().flatten().unwrap_or_default();
+        let enabled = db.ext_kv_get("sys", "setting:suggest_live").ok().flatten().unwrap_or_else(|| "1".into());
+        (engine, enabled != *"0")
+    };
+    if !enabled {
+        return Ok(Vec::new());
+    }
+    let endpoint = match engine.as_str() {
+        "google" => format!("https://suggestqueries.google.com/complete/search?client=firefox&q={}", urlencode(&q)),
+        "duckduckgo" | "" => format!("https://duckduckgo.com/ac/?type=list&q={}", urlencode(&q)),
+        "bing" => format!("https://api.bing.com/osjson.aspx?query={}", urlencode(&q)),
+        // Custom engines have no known suggest endpoint.
+        _ => return Ok(Vec::new()),
+    };
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(3))
+        .build();
+    let body = agent
+        .get(&endpoint)
+        .call()
+        .ok()
+        .filter(|r| r.status() == 200)
+        .and_then(|r| {
+            let mut buf = String::new();
+            use std::io::Read;
+            r.into_reader().take(64 * 1024).read_to_string(&mut buf).ok()?;
+            Some(buf)
+        })
+        .unwrap_or_default();
+    Ok(parse_suggest(&body))
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(*b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -894,3 +1118,113 @@ pub fn pick_sync_file(app: AppHandle) -> Result<Option<String>, crate::CommandEr
         Err(crate::CommandError::Message("自動同步目前僅支援桌面版".into()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_suggest;
+
+    #[test]
+    fn suggest_payload_parses_and_bounds() {
+        let body = r#"["wiki",["wikipedia","wikiwand","wikimedia","","x"]]"#;
+        assert_eq!(parse_suggest(body), vec!["wikipedia", "wikiwand", "wikimedia", "x"]);
+        assert_eq!(parse_suggest(r#"["q"]"#), Vec::<String>::new());
+        assert_eq!(parse_suggest("not json"), Vec::<String>::new());
+        assert_eq!(parse_suggest(r#"{"a":1}"#), Vec::<String>::new());
+    }
+}
+
+/// Saved logins live in the OS keychain under "pw:<host>", value is
+/// JSON {user, pass}. The password is only ever read for filling into
+/// the page or deleted; the chrome sees host + user only.
+fn pw_key(host: &str) -> String {
+    format!("pw:{host}")
+}
+
+/// Store the pending login (the prompt's 儲存 button).
+#[tauri::command]
+pub fn password_save(app: AppHandle) -> Result<bool, crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    let pending = state::lock(&state.pending_pw).take();
+    let Some(pending) = pending else {
+        return Ok(false);
+    };
+    let value = serde_json::json!({ "user": pending.user, "pass": pending.password }).to_string();
+    state
+        .secrets
+        .put(&pw_key(&pending.host), &value)
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    Ok(true)
+}
+
+/// Drop the pending login without storing (the prompt's 不要 button).
+#[tauri::command]
+pub fn password_dismiss(app: AppHandle) -> Result<(), crate::CommandError> {
+    let state = app.state::<BrowserState>();
+    *state::lock(&state.pending_pw) = None;
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct PasswordRow {
+    pub host: String,
+    pub user: String,
+}
+
+#[tauri::command]
+pub fn password_list(app: AppHandle) -> Vec<PasswordRow> {
+    let state = app.state::<BrowserState>();
+    let Ok(names) = state.secrets.list("pw:") else {
+        return Vec::new();
+    };
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let host = name.strip_prefix("pw:")?.to_owned();
+            let value = state.secrets.get(&name).ok()?;
+            let parsed: serde_json::Value = serde_json::from_str(&value).ok()?;
+            Some(PasswordRow { host, user: parsed.get("user")?.as_str()?.to_owned() })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn password_delete(app: AppHandle, host: String) -> Result<Vec<PasswordRow>, crate::CommandError> {
+    {
+        let state = app.state::<BrowserState>();
+        state
+            .secrets
+            .delete(&pw_key(&host))
+            .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    }
+    Ok(password_list(app))
+}
+
+/// Fill a saved login into the page's login form. Values only: the form
+/// is never submitted programmatically; the user clicks.
+pub const FILL_PW_SCRIPT: &str = r#"(function (user, pass) {
+  function setVal(el, v) {
+    try {
+      el.value = v;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (e) {}
+  }
+  function tryFill(root) {
+    var pws = root.querySelectorAll("input[type=password]");
+    if (!pws.length) return false;
+    var pw = Array.prototype.find.call(pws, function (p) { return !p.value || p.value !== pass; }) || pws[0];
+    setVal(pw, pass);
+    var inputs = root.querySelectorAll("input");
+    for (var i = 0; i < inputs.length; i++) {
+      var t = (inputs[i].type || "text").toLowerCase();
+      if (inputs[i] !== pw && (t === "email" || t === "text" || t === "tel")) {
+        setVal(inputs[i], user);
+        break;
+      }
+    }
+    return true;
+  }
+  if (tryFill(document)) return;
+  var forms = document.querySelectorAll("form");
+  for (var f = 0; f < forms.length; f++) if (tryFill(forms[f])) return;
+})"#;

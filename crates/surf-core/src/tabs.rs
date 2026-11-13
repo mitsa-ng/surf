@@ -13,6 +13,10 @@ impl fmt::Display for TabId {
     }
 }
 
+fn default_zoom() -> f64 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabState {
     pub id: TabId,
@@ -27,6 +31,14 @@ pub struct TabState {
     /// tab-strip close button.
     #[serde(default)]
     pub pinned: bool,
+    /// Page zoom (1.0 = 100%). Applied to the webview on set and re-applied
+    /// after each committed load; not part of the persisted session.
+    #[serde(default = "default_zoom")]
+    pub zoom: f64,
+    /// Tab audio muted (JS-level: every media element plus an observer for
+    /// later ones). macOS WKWebView exposes no native mute API.
+    #[serde(default)]
+    pub muted: bool,
     /// Webview history journal state, mirrored to the UI for the disabled
     /// back/forward buttons. Restored tabs start at false: the session
     /// restore reloads one URL, so there is genuinely nothing behind it.
@@ -110,6 +122,8 @@ impl TabModel {
             loading: url.is_some(),
             incognito,
             pinned: false,
+            zoom: 1.0,
+            muted: false,
             can_back: false,
             can_forward: false,
         };
@@ -185,6 +199,19 @@ impl TabModel {
 
     pub fn set_loading(&mut self, id: TabId, loading: bool) -> bool {
         self.mut_tab(id).map(|t| t.loading = loading).is_some()
+    }
+
+    /// Set the page zoom, clamped to the range webviews render sanely.
+    pub fn set_zoom(&mut self, id: TabId, zoom: f64) -> Option<f64> {
+        let clamped = zoom.clamp(0.25, 5.0);
+        self.mut_tab(id).map(|t| {
+            t.zoom = clamped;
+            clamped
+        })
+    }
+
+    pub fn set_muted(&mut self, id: TabId, muted: bool) -> bool {
+        self.mut_tab(id).map(|t| t.muted = muted).is_some()
     }
 
     /// Fold a committed navigation into the tab's history journal and
@@ -401,6 +428,23 @@ mod tests {
         assert!(m.set_url(a, url("https://a.example/")));
         assert_eq!(m.get(a).unwrap().url, Some(url("https://a.example/")));
         assert!(!m.activate(TabId(999)));
+    }
+
+    #[test]
+    fn zoom_clamps_and_mute_flags_roundtrip() {
+        let mut m = TabModel::new();
+        let a = m.open(None);
+        assert!((m.get(a).unwrap().zoom - 1.0).abs() < f64::EPSILON);
+        assert!(!m.get(a).unwrap().muted);
+        assert_eq!(m.set_zoom(a, 9.0), Some(5.0));
+        assert_eq!(m.set_zoom(a, 0.01), Some(0.25));
+        assert_eq!(m.set_zoom(a, 1.5), Some(1.5));
+        assert!((m.get(a).unwrap().zoom - 1.5).abs() < f64::EPSILON);
+        assert!(m.set_muted(a, true));
+        assert!(m.get(a).unwrap().muted);
+        // Unknown ids refuse.
+        assert_eq!(m.set_zoom(TabId(999), 1.0), None);
+        assert!(!m.set_muted(TabId(999), true));
     }
 
     #[test]

@@ -21,6 +21,18 @@ export const ui = $state<{
   tabMenu: null | { x: number; y: number; tabId: number };
   /** Address suggestions visible (drives chrome expansion). */
   suggestOpen: boolean;
+  /** Help dialog (menu 說明): keyboard shortcuts or about. */
+  help: null | "shortcuts" | "about";
+  /** Search engine setting ("duckduckgo" | "google" | "bing" | "custom"). */
+  searchEngine: string;
+  /** Custom engine template with {q}, when searchEngine is "custom". */
+  searchEngineCustom: string;
+  /** Live engine suggestions in the omnibox dropdown (setting-backed). */
+  suggestLive: boolean;
+  /** Login save prompt (host + user only; the password stays Rust-side). */
+  pwPrompt: null | { host: string; user: string };
+  /** Saved logins for the settings panel (host + user). */
+  passwords: ipc.PasswordRow[];
 }>({
   panel: null,
   extensions: [],
@@ -36,7 +48,24 @@ export const ui = $state<{
   findOpen: false,
   tabMenu: null,
   suggestOpen: false,
+  help: null,
+  searchEngine: "duckduckgo",
+  searchEngineCustom: "",
+  suggestLive: true,
+  pwPrompt: null,
+  passwords: [],
 });
+
+const ENGINE_LABELS: Record<string, string> = {
+  duckduckgo: "DuckDuckGo",
+  google: "Google",
+  bing: "Bing",
+  custom: "搜尋",
+};
+
+export function searchEngineLabel(): string {
+  return ENGINE_LABELS[ui.searchEngine] ?? "搜尋";
+}
 
 let started = false;
 
@@ -58,12 +87,50 @@ export async function initUi() {
       .settingsGet("bookmarks_bar")
       .then((v) => (ui.bookmarksBar = v !== null && v !== ""))
       .catch(() => {}),
+    ipc
+      .settingsGet("search_engine")
+      .then((v) => {
+        if (v) ui.searchEngine = v;
+      })
+      .catch(() => {}),
+    ipc
+      .settingsGet("search_engine_custom")
+      .then((v) => (ui.searchEngineCustom = v ?? ""))
+      .catch(() => {}),
+    ipc
+      .settingsGet("suggest_live")
+      .then((v) => (ui.suggestLive = v !== "0"))
+      .catch(() => {}),
   ]);
   // Download events arrive from the download handlers; refresh the list.
   const { listen } = await import("@tauri-apps/api/event");
   for (const event of ["downloads://started", "downloads://finished"]) {
     void listen(event, () => void refreshDownloads()).catch(() => {});
   }
+  // A submitted login asks whether to save (host + user only).
+  void ipc
+    .onPwPrompt((host, user) => {
+      ui.pwPrompt = { host, user };
+    })
+    .catch(() => {});
+}
+
+export async function refreshPasswords() {
+  ui.passwords = await ipc.passwordList().catch(() => []);
+}
+
+export async function savePromptedPassword() {
+  ui.pwPrompt = null;
+  await ipc.passwordSave().catch((e) => console.error(String(e)));
+}
+
+export async function dismissPromptedPassword() {
+  ui.pwPrompt = null;
+  await ipc.passwordDismiss().catch((e) => console.error(String(e)));
+}
+
+export async function deletePassword(host: string) {
+  ui.passwords = await ipc.passwordDelete(host).catch(() => ui.passwords);
 }
 
 /** Cmd/Ctrl+Shift+B: toggle the desktop bookmarks bar. */
@@ -80,8 +147,9 @@ export async function refreshBookmarks() {
   ui.bookmarks = await ipc.bookmarksList().catch(() => []);
 }
 
-export async function refreshHistory() {
-  ui.history = await ipc.historyRecent(100).catch(() => []);
+export async function refreshHistory(query = "") {
+  const trimmed = query.trim();
+  ui.history = await ipc.historySearch(trimmed).catch(() => []);
 }
 
 export async function refreshDownloads() {

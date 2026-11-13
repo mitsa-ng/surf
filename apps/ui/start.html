@@ -53,6 +53,7 @@
       .tiles button:hover { background: rgba(29, 29, 31, 0.06); }
       @media (prefers-color-scheme: dark) { .tiles button:hover { background: rgba(245, 245, 247, 0.08); } }
       .tiles .name { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .fav img { width: 100%; height: 100%; object-fit: contain; border-radius: 6px; }
       .fav {
         width: 32px; height: 32px; border-radius: 8px;
         display: inline-grid; place-items: center;
@@ -107,6 +108,14 @@
           f.className = "fav";
           f.style.setProperty("--h", hash(s.host));
           f.textContent = (s.host.match(/[a-z0-9]/i) || ["?"])[0].toUpperCase();
+          if (s.favicon) {
+            var img = document.createElement("img");
+            img.src = s.favicon;
+            img.alt = "";
+            img.onerror = function () { img.remove(); };
+            f.textContent = "";
+            f.appendChild(img);
+          }
           var n = document.createElement("span");
           n.className = "name";
           n.textContent = s.title;

@@ -8,6 +8,10 @@ export interface TabState {
   loading: boolean;
   incognito?: boolean;
   pinned?: boolean;
+  /** Page zoom (1 = 100%), applied to the webview and re-applied per load. */
+  zoom?: number;
+  /** Tab audio muted (JS-level; the webview platform has no mute API). */
+  muted?: boolean;
   /** Mirrored webview history state for the disabled nav buttons. */
   canBack?: boolean;
   canForward?: boolean;
@@ -61,6 +65,14 @@ export const tabReload = (id: number) => invoke<void>("tab_reload", { id });
 
 export const tabStop = (id: number) => invoke<void>("tab_stop", { id });
 
+/** Zoom the tab: "in" (×1.25), "out" (÷1.25), or "reset" (100%). */
+export const tabZoom = (id: number, mode: "in" | "out" | "reset") =>
+  invoke<TabsSnapshot>("tab_zoom", { id, mode });
+
+/** Mute or unmute the tab's audio. */
+export const tabSetMuted = (id: number, muted: boolean) =>
+  invoke<TabsSnapshot>("tab_set_muted", { id, muted });
+
 export const filterCapabilities = () => invoke<FilterCapabilities>("filter_capabilities");
 
 export interface ExtensionSummary {
@@ -100,6 +112,13 @@ export interface HistoryRow {
 }
 
 export const historyRecent = (limit = 100) => invoke<HistoryRow[]>("history_recent", { limit });
+
+/** Remove one history row (per-item delete in the history panel). */
+export const historyDelete = (url: string, visitedAt: number) =>
+  invoke<boolean>("history_delete", { url, visitedAt: visitedAt });
+
+/** History rows matching a substring in url or title; empty query = recent. */
+export const historySearch = (query: string) => invoke<HistoryRow[]>("history_search", { query });
 
 export const rulesGet = () => invoke<string[]>("rules_get");
 
@@ -143,3 +162,24 @@ export const onFindCount = (handler: (tab: number, count: number) => void): Prom
 
 /** Take the cold-start deep link queued before this UI mounted. */
 export const deeplinkTake = () => invoke<string | null>("deeplink_take");
+
+/** Live search suggestions from the configured engine. */
+export const suggest = (query: string) => invoke<string[]>("suggest", { query });
+
+/** Saved logins (host + user; the password never leaves the keychain). */
+export interface PasswordRow {
+  host: string;
+  user: string;
+}
+
+export const passwordSave = () => invoke<boolean>("password_save");
+
+export const passwordDismiss = () => invoke<void>("password_dismiss");
+
+export const passwordList = () => invoke<PasswordRow[]>("password_list");
+
+export const passwordDelete = (host: string) => invoke<PasswordRow[]>("password_delete", { host });
+
+/** The chrome listens for this to show the save prompt. */
+export const onPwPrompt = (handler: (host: string, user: string) => void): Promise<UnlistenFn> =>
+  listen<{ host: string; user: string }>("pw://prompt", (event) => handler(event.payload.host, event.payload.user));

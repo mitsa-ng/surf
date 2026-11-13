@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ui, refreshBookmarks } from "../ui.svelte";
   import { tabs, closeTab, openTab, setPinned, applySnapshot } from "../tabs.svelte";
-  import { splitClear, splitSet, tabNavigate, tabReload, tabCloseOthers, tabCloseRight } from "../ipc";
+  import { splitClear, splitSet, tabNavigate, tabReload, tabCloseOthers, tabCloseRight, tabSetMuted } from "../ipc";
 
   const menu = $derived(ui.tabMenu);
   const tab = $derived(menu ? tabs.list.find((t) => t.id === menu.tabId) ?? null : null);
@@ -107,6 +107,12 @@
     close();
   }
 
+  async function toggleMute() {
+    if (!tab) return;
+    await tabSetMuted(tab.id, !tab.muted).then(applySnapshot).catch((e) => console.error(String(e)));
+    close();
+  }
+
   async function splitWith() {
     if (!menu || !tab) return;
     const other = tabs.activeId !== tab.id ? tabs.activeId : tabs.list.find((t) => t.id !== tab.id)?.id ?? null;
@@ -172,6 +178,7 @@
     {:else}
       <button role="menuitem" onclick={() => void leaveSplit()}>結束分割畫面</button>
     {/if}
+    <button role="menuitem" onclick={() => void toggleMute()}>{tab.muted ? "取消靜音分頁" : "靜音分頁"}</button>
     <hr aria-hidden="true" />
     <button role="menuitem" onclick={removeTab}>
       <span>關閉分頁</span><span class="sc">⌘W</span>

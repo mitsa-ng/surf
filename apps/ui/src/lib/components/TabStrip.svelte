@@ -33,6 +33,11 @@
         {#if tab.incognito}
           <span class="private-mark" aria-label="無痕分頁" title="無痕">無痕</span>
         {/if}
+        {#if tab.muted}
+          <span class="muted" aria-label="分頁已靜音" title="已靜音">
+            <Icon name="mute" />
+          </span>
+        {/if}
         {#if tab.loading}
           <span class="loading-dot" aria-label="載入中"></span>
         {/if}
@@ -206,6 +211,16 @@
     border-radius: 50%;
     background: var(--accent);
     flex: none;
+  }
+  .muted {
+    flex: none;
+    display: grid;
+    place-items: center;
+    color: var(--text-secondary);
+  }
+  .muted :global(svg) {
+    width: 12px;
+    height: 12px;
   }
   .pin {
     position: absolute;

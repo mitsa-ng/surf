@@ -335,13 +335,43 @@ impl<'a> MainPipe<'a> {
           &[(&webview).into(), (&webview_client).into()],
         )?;
 
-        // Set content view
-        self.env.call_method(
-          &activity,
-          "setContentView",
-          "(Landroid/view/View;)V",
-          &[(&webview).into()],
-        )?;
+        // SURF PATCH: only the FIRST webview becomes the activity content
+        // view; setContentView on every creation detaches the previous
+        // webview, and a detached WebView silently drops every
+        // evaluateJavascript (the Android multi-webview eval black hole).
+        // Additional webviews stack into the android.R.id.content frame.
+        {
+          let was_first = {
+            let proxies = ACTIVITY_PROXY.lock().unwrap();
+            proxies.get(&activity_id).map(|p| p.webviews.is_empty()).unwrap_or(true)
+          };
+          if was_first {
+            self.env.call_method(
+              &activity,
+              "setContentView",
+              "(Landroid/view/View;)V",
+              &[(&webview).into()],
+            )?;
+          } else {
+            // android.R.id.content = 16908290; its ContentFrameLayout is a
+            // ViewGroup, and addView(View) stacks the new webview on top.
+            let content_frame = self
+              .env
+              .call_method(
+                &activity,
+                "findViewById",
+                "(I)Landroid/view/View;",
+                &[16908290.into()],
+              )
+              .and_then(|v| v.l())?;
+            self.env.call_method(
+              &content_frame,
+              "addView",
+              "(Landroid/view/View;)V",
+              &[(&webview).into()],
+            )?;
+          }
+        }
 
         if let Some(on_webview_created) = on_webview_created {
           if let Err(_e) = on_webview_created(super::Context {
@@ -353,7 +383,6 @@ impl<'a> MainPipe<'a> {
             tracing::warn!("failed to run webview created hook: {_e}");
           }
         }
-
         let webview: GlobalRef = self.env.new_global_ref(webview)?;
 
         let mut proxies = ACTIVITY_PROXY.lock().unwrap();

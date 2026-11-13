@@ -162,6 +162,8 @@ pub fn split_set(app: AppHandle, left: u64, right: u64) -> Result<(), String> {
             }
             *state::lock(&state.split) = Some((left, right));
         }
+        // Split survives restarts as part of the persisted session.
+        crate::manager::persist_session(&app);
         relayout(&app).map_err(|error| error.to_string())
     }
     #[cfg(mobile)]
@@ -179,6 +181,7 @@ pub fn split_clear(app: AppHandle) -> Result<(), String> {
     #[cfg(desktop)]
     {
         if had {
+            crate::manager::persist_session(&app);
             return relayout(&app).map_err(|error| error.to_string());
         }
     }

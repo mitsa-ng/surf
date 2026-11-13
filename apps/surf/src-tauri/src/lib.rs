@@ -7,6 +7,7 @@ mod commands;
 mod content_bridge;
 mod deep_links;
 mod ext_scheme;
+mod favicon;
 mod filters;
 mod keychain;
 mod layout;
@@ -36,6 +37,7 @@ impl serde::Serialize for CommandError {
 pub fn run() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("ext", ext_scheme::handle)
+        .register_uri_scheme_protocol("favicon", favicon::handle_asset)
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -47,7 +49,12 @@ pub fn run() {
                 eprintln!("storage open failed, falling back to in-memory: {e}");
                 surf_core::storage::Db::open(":memory:").expect("in-memory db")
             });
-            app.manage(state::BrowserState::new(db));
+            let favicon_dir = app
+                .path()
+                .app_cache_dir()
+                .map(|d| d.join("favicons"))
+                .unwrap_or_else(|_| data_dir.join("favicons"));
+            app.manage(state::BrowserState::new(db, favicon_dir));
 
             state::setup(app)
         })
@@ -66,6 +73,8 @@ pub fn run() {
             commands::tab_forward,
             commands::tab_reload,
             commands::tab_stop,
+            commands::tab_zoom,
+            commands::tab_set_muted,
             commands::deeplink_take,
             commands::filter_capabilities,
             commands::extensions_list,
@@ -81,6 +90,8 @@ pub fn run() {
             commands::bookmarks_add,
             commands::bookmarks_remove,
             commands::history_recent,
+            commands::history_delete,
+            commands::history_search,
             commands::settings_get,
             commands::settings_set,
             commands::rules_get,
@@ -100,6 +111,15 @@ pub fn run() {
             commands::downloads_list,
             commands::download_reveal,
             commands::find_in_page,
+            commands::suggest,
+            favicon::favicon_url,
+            agent::agent_action,
+            agent::agent_llm_config_get,
+            agent::agent_llm_config_set,
+            commands::password_save,
+            commands::password_dismiss,
+            commands::password_list,
+            commands::password_delete,
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");

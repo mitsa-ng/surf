@@ -13,6 +13,9 @@ pub trait SecretStore {
     fn put(&self, name: &str, value: &str) -> Result<(), SecretError>;
     fn get(&self, name: &str) -> Result<String, SecretError>;
     fn delete(&self, name: &str) -> Result<(), SecretError>;
+    /// Names of stored secrets starting with `prefix`, sorted. Used by the
+    /// saved-passwords list; the keychain implements it via SecItem search.
+    fn list(&self, prefix: &str) -> Result<Vec<String>, SecretError>;
 }
 
 /// In-memory store; swapped for the OS keychain in the Tauri shell on
@@ -50,6 +53,18 @@ impl SecretStore for MemorySecretStore {
         self.entries.lock().unwrap().remove(name);
         Ok(())
     }
+    fn list(&self, prefix: &str) -> Result<Vec<String>, SecretError> {
+        let mut names: Vec<String> = self
+            .entries
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|n| n.starts_with(prefix))
+            .cloned()
+            .collect();
+        names.sort();
+        Ok(names)
+    }
 }
 
 #[cfg(test)]
@@ -63,5 +78,15 @@ mod tests {
         assert_eq!(s.get("sync-key").unwrap(), "v1");
         s.delete("sync-key").unwrap();
         assert!(matches!(s.get("sync-key"), Err(SecretError::NotFound(_))));
+    }
+
+    #[test]
+    fn list_filters_by_prefix() {
+        let s = MemorySecretStore::new();
+        s.put("pw:a.example", "x").unwrap();
+        s.put("pw:b.example", "y").unwrap();
+        s.put("other", "z").unwrap();
+        assert_eq!(s.list("pw:").unwrap(), vec!["pw:a.example", "pw:b.example"]);
+        assert!(s.list("none:").unwrap().is_empty());
     }
 }

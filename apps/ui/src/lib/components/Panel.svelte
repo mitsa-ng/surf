@@ -7,7 +7,17 @@
   import SettingsPanel from "./SettingsPanel.svelte";
   import DownloadsPanel from "./DownloadsPanel.svelte";
   import AgentPanel from "./AgentPanel.svelte";
+
+  function onKeydown(e: KeyboardEvent) {
+    // Esc closes the drawer like every other chrome overlay (R-32).
+    if (e.key === "Escape" && ui.panel !== null) {
+      e.stopPropagation();
+      ui.panel = null;
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 {#if ui.panel}
   <div class="scrim" role="presentation" onclick={() => (ui.panel = null)}></div>

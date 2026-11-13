@@ -1,4 +1,5 @@
 import * as ipc from "./ipc";
+import { isInternalCommand, runInternalCommand } from "./internal";
 
 export const tabs = $state<{
   list: ipc.TabState[];
@@ -85,6 +86,15 @@ export async function activateTab(id: number) {
 export async function navigateActive(input: string) {
   const id = tabs.activeId;
   if (id === null) return;
+  // Internal commands (surf://…) run browser actions, never a webview
+  // load: nothing serves that scheme, so falling through would strand
+  // the tab on a dead navigation.
+  if (isInternalCommand(input)) {
+    const outcome = runInternalCommand(input);
+    if (outcome !== "unknown") return;
+    console.error(`未知的內部命令：${input}`);
+    return;
+  }
   try {
     applySnapshot(await ipc.tabNavigate(id, input));
   } catch (e) {

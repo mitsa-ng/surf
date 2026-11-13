@@ -99,6 +99,27 @@ pub fn bootstrap_script(token: &str) -> String {
   window.__surfReceive = (name, payload) => {{
     if (typeof window.__surfOnEvent === "function") window.__surfOnEvent(name, payload);
   }};
+  // Login capture for the password save prompt: on submit, report the
+  // password field plus the closest username-looking field. The page
+  // could also forge this (shared JS world); the prompt still requires
+  // user consent before anything is stored.
+  const pwSent = new WeakSet();
+  document.addEventListener("submit", (e) => {{
+    try {{
+      const form = e.target;
+      if (!form || pwSent.has(form)) return;
+      const pw = form.querySelector("input[type=password]");
+      if (!pw || !pw.value) return;
+      const fields = Array.from(form.querySelectorAll("input"));
+      const userField = fields.find((f) => {{
+        const t = (f.type || "text").toLowerCase();
+        return f !== pw && f.value && (t === "email" || t === "text" || t === "tel");
+      }});
+      if (!userField) return;
+      pwSent.add(form);
+      send("pw://submit", {{ user: userField.value, pass: pw.value }});
+    }} catch (err) {{ /* capture must never break the submit */ }}
+  }}, true);
 }})();"#,
         token = token
     )

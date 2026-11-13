@@ -189,7 +189,8 @@ impl ApiModule for BookmarksModule {
     }
 }
 
-/// fetch(url, {method}) with a 1 MiB response cap.
+/// fetch(url, {method, body, headers}) with a 1 MiB response cap. The
+/// request body is capped at the same size.
 pub struct FetchModule;
 
 impl ApiModule for FetchModule {
@@ -205,8 +206,33 @@ impl ApiModule for FetchModule {
                 if !matches!(http.scheme(), "http" | "https") {
                     return Err(ApiError::Denied("only http(s) fetch is supported".into()));
                 }
+                let verb = args.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_ascii_uppercase();
+                if !matches!(verb.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD") {
+                    return Err(ApiError::Denied(format!("unsupported method: {verb}")));
+                }
+                let body = args.get("body").and_then(|v| v.as_str()).map_or(String::new(), str::to_owned);
+                if body.len() > 1024 * 1024 {
+                    return Err(ApiError::Denied("request body exceeds 1 MiB".into()));
+                }
                 let agent = ureq::AgentBuilder::new().build();
-                let resp = agent.get(http.as_str()).call().map_err(|e| ApiError::Denied(e.to_string()))?;
+                let mut request = agent.request(&verb, http.as_str());
+                if let Some(headers) = args.get("headers").and_then(|v| v.as_object()) {
+                    for (name, value) in headers {
+                        let value = value.as_str().ok_or_else(|| ApiError::Denied("header values must be strings".into()))?;
+                        // Host overrides would let an extension spoof origin.
+                        if name.eq_ignore_ascii_case("host") {
+                            return Err(ApiError::Denied("host header cannot be overridden".into()));
+                        }
+                        request = request.set(name, value);
+                    }
+                }
+                let resp = if body.is_empty() {
+                    request.call().map_err(|e| ApiError::Denied(e.to_string()))?
+                } else {
+                    request
+                        .send_bytes(body.as_bytes())
+                        .map_err(|e| ApiError::Denied(e.to_string()))?
+                };
                 let status = resp.status();
                 let mut body = String::new();
                 resp.into_reader()

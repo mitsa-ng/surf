@@ -10,8 +10,15 @@ members = [
 # (eval/load/url/...) through a per-webview map instead of the single
 # last-created slot, so multiple webviews on one activity each receive
 # their own IPC responses and events. Drop when upstream wry fixes it.
+#
+# Local fork of tauri-runtime-wry 2.12.3: the webview-message dispatch
+# silently dropped messages whose (window_id, webview_id) lookup missed,
+# which killed the Android main window's eval/emit path. Our fork logs
+# the exact mismatch (and pins whatever fix the logs justify). Drop when
+# upstream handles the miss explicitly.
 [patch.crates-io]
 wry = { path = "vendor/wry" }
+tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
 
 [workspace.package]
 version = "0.1.0"

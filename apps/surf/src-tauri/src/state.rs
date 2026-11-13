@@ -24,6 +24,16 @@ pub struct ClosedTabInfo {
     pub title: Option<String>,
 }
 
+/// A submitted login awaiting the save prompt. The password lives here
+/// only until the user answers the prompt; it never reaches the chrome
+/// webview or the database, only the OS keychain.
+#[derive(Clone)]
+pub struct PendingPassword {
+    pub host: String,
+    pub user: String,
+    pub password: String,
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct TabsSnapshot {
     pub tabs: Vec<TabState>,
@@ -59,6 +69,10 @@ pub struct BrowserState {
     pub nav_filter: crate::nav_filter::NavFilter,
     /// Download history for the downloads panel (newest first).
     pub downloads: Mutex<Vec<crate::commands::DownloadRecord>>,
+    /// Favicon disk cache + per-origin results (see favicon.rs).
+    pub favicons: crate::favicon::FaviconCache,
+    /// A login form submission awaiting the save prompt (see commands).
+    pub pending_pw: Mutex<Option<PendingPassword>>,
     /// Recently closed tabs (for Cmd+Shift+T), newest last. Private tabs
     /// are never recorded.
     pub recently_closed: Mutex<Vec<crate::state::ClosedTabInfo>>,
@@ -74,7 +88,7 @@ pub struct BrowserState {
 }
 
 impl BrowserState {
-    pub fn new(db: Db) -> Self {
+    pub fn new(db: Db, favicon_dir: std::path::PathBuf) -> Self {
         Self {
             panel_open: AtomicBool::new(false),
             overlay_open: AtomicBool::new(false),
@@ -95,6 +109,8 @@ impl BrowserState {
             secrets: std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new()),
             nav_filter: crate::nav_filter::NavFilter::default(),
             downloads: Mutex::new(Vec::new()),
+            favicons: crate::favicon::FaviconCache::new(favicon_dir),
+            pending_pw: Mutex::new(None),
             recently_closed: Mutex::new(Vec::new()),
             split: Mutex::new(None),
             launch_deeplink: Mutex::new(None),
@@ -176,6 +192,20 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .flatten()
             .is_some_and(|v| !v.is_empty());
         state.bookmarks_bar.store(bar, std::sync::atomic::Ordering::Relaxed);
+        // Downloads persist across launches (newest first, capped at 100).
+        {
+            let rows = lock(&state.db).downloads_all(100).unwrap_or_default();
+            *lock(&state.downloads) = rows
+                .into_iter()
+                .map(|r| crate::commands::DownloadRecord {
+                    url: r.url,
+                    path: r.path,
+                    filename: r.filename,
+                    success: r.success,
+                    at: r.at,
+                })
+                .collect();
+        }
     }
     #[cfg(desktop)]
     {
@@ -380,11 +410,17 @@ fn restore_session(app: &AppHandle) {
             crate::manager::open_tab(app, &window, None);
             return;
         }
-        for tab in saved {
+        let mut id_by_position: HashMap<usize, TabId> = HashMap::new();
+        for (position, tab) in saved.into_iter().enumerate() {
             let id = crate::manager::open_tab(app, &window, tab.url.clone());
             if let Some(title) = tab.title {
                 lock(&state.model).set_title(id, title);
             }
+            id_by_position.insert(position, id);
+        }
+        // A split view persisted before quit returns with the session.
+        if crate::manager::restore_split(&state, &id_by_position).is_some() {
+            let _ = layout::relayout(app);
         }
     }
     #[cfg(mobile)]

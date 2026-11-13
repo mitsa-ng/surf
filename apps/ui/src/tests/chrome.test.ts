@@ -5,19 +5,21 @@
 import { mount, unmount } from "svelte";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const invokeMock = vi.fn(async (cmd: string, _args?: object) => {
+const invokeMockImpl = async (cmd: string, _args?: object) => {
   switch (cmd) {
     case "get_tabs":
       return { tabs: [], active: null };
     case "bookmarks_list":
     case "history_recent":
+    case "history_search":
     case "extensions_list":
     case "downloads_list":
       return [];
     default:
       return null;
   }
-});
+};
+const invokeMock = vi.fn(invokeMockImpl);
 const listenMock = vi.fn(async (_event?: string, _handler?: unknown) => () => {});
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -231,5 +233,91 @@ describe("agent panel", () => {
     // same side effect here (custom element registration).
     await import("@a2ui/lit/v0_9");
     expect(typeof customElements.get("a2ui-surface"), "a2ui-surface registered").toBe("function");
+  });
+});
+
+describe("internal surf:// commands", () => {
+  beforeEach(() => {
+    // mockImplementation overrides persist across mockClear; restore the
+    // default so later describes keep the sane list-returning mock.
+    invokeMock.mockImplementation(invokeMockImpl);
+    ui.panel = null;
+    ui.tabSearchOpen = false;
+  });
+
+  it("runs a known command and never reaches the webview load path", async () => {
+    const { runInternalCommand, isInternalCommand } = await import("../lib/internal");
+    expect(isInternalCommand("surf://settings")).toBe(true);
+    expect(isInternalCommand("https://surf.io")).toBe(false);
+    const calls: string[] = [];
+    invokeMock.mockImplementation(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "get_tabs") return { tabs: [], active: null };
+      if (cmd === "split_set") return null;
+      return null;
+    });
+    expect(runInternalCommand("surf://settings")).toBe("handled");
+    expect(ui.panel).toBe("settings");
+    expect(runInternalCommand("surf://tabs")).toBe("handled");
+    expect(ui.tabSearchOpen).toBe(true);
+    expect(runInternalCommand("surf://unsplit")).toBe("handled");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toContain("split_clear");
+    // No tab_navigate ever fired: internal commands are not page loads.
+    expect(calls).not.toContain("tab_navigate");
+  });
+
+  it("reports unknown hosts instead of stranding the tab", async () => {
+    const { runInternalCommand } = await import("../lib/internal");
+    expect(runInternalCommand("surf://nonexistent")).toBe("unknown");
+  });
+
+  it("navigates through the omnibox router: internal commands never load", async () => {
+    const { navigateActive } = await import("../lib/tabs.svelte");
+    seedTabs([{ id: 5, url: "https://a.example/", title: "A", loading: false }]);
+    const calls: string[] = [];
+    invokeMock.mockImplementation(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "get_tabs") return { tabs: [], active: null };
+      return null;
+    });
+    await navigateActive("surf://settings");
+    expect(ui.panel).toBe("settings");
+    expect(calls).not.toContain("tab_navigate");
+    ui.panel = null;
+    await navigateActive("https://example.org/");
+    expect(calls).toContain("tab_navigate");
+  });
+});
+
+describe("help dialog", () => {
+  beforeEach(() => {
+    // The omnibox-router test above swaps the implementation; restore it.
+    invokeMock.mockImplementation(invokeMockImpl);
+    document.body.innerHTML = "";
+    ui.help = null;
+  });
+
+  it("opens the shortcuts table and closes on Escape", async () => {
+    const { app, target } = await renderApp();
+    ui.help = "shortcuts";
+    await new Promise((r) => setTimeout(r, 10));
+    const dialog = target.querySelector('[role="dialog"]');
+    expect(dialog, "dialog missing").toBeTruthy();
+    expect(dialog!.querySelectorAll("tr").length).toBeGreaterThan(6);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(ui.help).toBe(null);
+    await unmount(app);
+  });
+
+  it("shows the about sheet with a real version from the app api", async () => {
+    const { app, target } = await renderApp();
+    ui.help = "about";
+    await new Promise((r) => setTimeout(r, 30));
+    const dialog = target.querySelector('[role="dialog"]');
+    expect(dialog, "dialog missing").toBeTruthy();
+    expect(dialog!.textContent).toContain("安靜極簡");
+    await unmount(app);
   });
 });
