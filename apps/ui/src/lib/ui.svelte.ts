@@ -2,7 +2,7 @@ import * as ipc from "./ipc";
 import { tabs } from "./tabs.svelte";
 
 export const ui = $state<{
-  panel: null | "bookmarks" | "history" | "extensions" | "settings" | "downloads";
+  panel: null | "bookmarks" | "history" | "extensions" | "settings" | "downloads" | "agent";
   extensions: ipc.ExtensionSummary[];
   bookmarks: ipc.BookmarkRow[];
   history: ipc.HistoryRow[];
@@ -88,7 +88,7 @@ export async function refreshDownloads() {
   ui.downloads = await ipc.downloadsList().catch(() => []);
 }
 
-export function togglePanel(name: "bookmarks" | "history" | "extensions" | "settings" | "downloads") {
+export function togglePanel(name: "bookmarks" | "history" | "extensions" | "settings" | "downloads" | "agent") {
   if (ui.panel === name) {
     ui.panel = null;
     return;

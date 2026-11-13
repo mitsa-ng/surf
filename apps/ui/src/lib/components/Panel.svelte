@@ -6,6 +6,7 @@
   import ExtensionsPanel from "./ExtensionsPanel.svelte";
   import SettingsPanel from "./SettingsPanel.svelte";
   import DownloadsPanel from "./DownloadsPanel.svelte";
+  import AgentPanel from "./AgentPanel.svelte";
 </script>
 
 {#if ui.panel}
@@ -29,6 +30,8 @@
       <SettingsPanel />
     {:else if ui.panel === "downloads"}
       <DownloadsPanel />
+    {:else if ui.panel === "agent"}
+      <AgentPanel />
     {/if}
   </aside>
 {/if}

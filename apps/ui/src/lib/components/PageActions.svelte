@@ -6,6 +6,7 @@
   // open panel marked by the same hover fill so the state is visible
   // without adding a second accent color.
   const panels = [
+    { name: "agent", icon: "agent", label: "Agent" },
     { name: "downloads", icon: "download", label: "下載項目" },
     { name: "history", icon: "history", label: "瀏覽紀錄" },
     { name: "bookmarks", icon: "list", label: "書籤" },

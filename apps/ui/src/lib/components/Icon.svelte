@@ -19,6 +19,7 @@
     chevronDown: "M4.5 6.5 8 10l3.5-3.5",
     list: "M5.5 4.5h8M5.5 8h8M5.5 11.5h8",
     puzzle: "M4 4h3v1.5a1.5 1.5 0 1 0 2 0V4h3v3h-1.5a1.5 1.5 0 1 0 0 2H12v3H9v-1.5a1.5 1.5 0 1 0-2 0V12H4V9h1.5a1.5 1.5 0 1 0 0-2H4z",
+    agent: "M2.5 3.5h11v7.5h-6.5L4 13.5v-2.5H2.5zM5 6.5h6M5 8.5h4",
   } as const;
 
   export type IconName = keyof typeof paths;

@@ -206,3 +206,30 @@ describe("tab menu", () => {
     document.body.innerHTML = "";
   });
 });
+
+describe("agent panel", () => {
+  it("renders the a2ui host with a connecting state before the stream lands", async () => {
+    const { app, target } = await renderApp();
+    const actions = target.querySelector(".actions")!;
+    const agentBtn = Array.from(actions.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.getAttribute("aria-label") ?? "").includes("Agent"),
+    );
+    expect(agentBtn, "agent toolbar button missing").toBeTruthy();
+    agentBtn!.click();
+    await new Promise((r) => setTimeout(r, 80));
+    const drawer = target.querySelector(".drawer");
+    expect(drawer, "panel drawer missing").toBeTruthy();
+    // The real a2ui packages load lazily; in jsdom the custom element
+    // definition may trail the first paint, so assert the host either way.
+    const host = drawer!.querySelector(".a2ui-host");
+    expect(host, "a2ui host missing").toBeTruthy();
+    await unmount(app);
+  });
+
+  it("registers <a2ui-surface> once the runtime loads", async () => {
+    // The panel mounts the runtime lazily; loading the packages has the
+    // same side effect here (custom element registration).
+    await import("@a2ui/lit/v0_9");
+    expect(typeof customElements.get("a2ui-surface"), "a2ui-surface registered").toBe("function");
+  });
+});

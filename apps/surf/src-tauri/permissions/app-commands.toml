@@ -47,4 +47,5 @@ commands.allow = [
     "pick_sync_file",
     "panel_set_open",
     "overlay_set_open",
+    "agent_panel_set_open",
 ]

@@ -1,3 +1,4 @@
+mod agent;
 mod api_impl;
 #[cfg(desktop)]
 mod auto_sync;
@@ -91,6 +92,7 @@ pub fn run() {
             commands::pick_sync_file,
             layout::panel_set_open,
             layout::overlay_set_open,
+            agent::agent_panel_set_open,
             layout::bookmarks_bar_set_open,
             layout::split_set,
             layout::split_clear,
