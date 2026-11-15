@@ -8,3 +8,4 @@ apps/surf/src-tauri/gen/android/.gradle/
 apps/surf/src-tauri/gen/android/app/build/
 apps/surf/src-tauri/gen/android/build/
 apps/surf/src-tauri/gen/ios/DerivedData/
+.zcode/

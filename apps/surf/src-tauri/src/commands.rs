@@ -52,7 +52,7 @@ pub fn tab_open_incognito(app: AppHandle) -> Result<TabsSnapshot, crate::Command
             let mut model = state::lock(&state.model);
             model.open_private(None)
         };
-        let _ = crate::manager::ensure_tab_window(&app, id, None);
+        let _ = crate::manager::ensure_tab_webview(&app, id, None);
     }
     Ok(snapshot(&app))
 }
@@ -185,58 +185,31 @@ pub fn tab_navigate(app: AppHandle, id: u64, input: String) -> Result<TabsSnapsh
 
 #[tauri::command]
 pub fn tab_back(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(desktop)]
-    {
-        // The journal cursor moves first; the eval then lands on the
-        // stepped-to entry, which the on_navigation hook confirms.
-        let state = app.state::<BrowserState>();
-        let allowed = state::lock(&state.model).history_back(TabId(id));
-        if allowed {
-            crate::manager::eval_history(&app, TabId(id), "history.back()")?;
-            crate::manager::emit_tabs(&app);
-        }
-    }
-    #[cfg(mobile)]
-    {
-        // Per-tab webview history arrives with instance-swap (M3); the
-        // model-level reload hints the UI instead.
-        let _ = (&app, &id);
+    // The journal cursor moves first; the eval then lands on the
+    // stepped-to entry, which the on_navigation hook confirms.
+    let state = app.state::<BrowserState>();
+    let allowed = state::lock(&state.model).history_back(TabId(id));
+    if allowed {
+        crate::manager::eval_history(&app, TabId(id), "history.back()")?;
+        crate::manager::emit_tabs(&app);
     }
     Ok(())
 }
 
 #[tauri::command]
 pub fn tab_forward(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(desktop)]
-    {
-        let state = app.state::<BrowserState>();
-        let allowed = state::lock(&state.model).history_forward(TabId(id));
-        if allowed {
-            crate::manager::eval_history(&app, TabId(id), "history.forward()")?;
-            crate::manager::emit_tabs(&app);
-        }
-    }
-    #[cfg(mobile)]
-    {
-        // Per-tab webview history arrives with instance-swap (M3); the
-        // model-level reload hints the UI instead.
-        let _ = (&app, &id);
+    let state = app.state::<BrowserState>();
+    let allowed = state::lock(&state.model).history_forward(TabId(id));
+    if allowed {
+        crate::manager::eval_history(&app, TabId(id), "history.forward()")?;
+        crate::manager::emit_tabs(&app);
     }
     Ok(())
 }
 
 #[tauri::command]
 pub fn tab_reload(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(desktop)]
-    {
-        crate::manager::eval_history(&app, TabId(id), "location.reload()")?;
-    }
-    #[cfg(mobile)]
-    {
-        // Per-tab webview history arrives with instance-swap (M3); the
-        // model-level reload hints the UI instead.
-        let _ = (&app, &id);
-    }
+    crate::manager::eval_history(&app, TabId(id), "location.reload()")?;
     Ok(())
 }
 
@@ -244,14 +217,7 @@ pub fn tab_reload(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
 /// `loading`, mirroring Chrome.
 #[tauri::command]
 pub fn tab_stop(app: AppHandle, id: u64) -> Result<(), crate::CommandError> {
-    #[cfg(desktop)]
-    {
-        crate::manager::eval_history(&app, TabId(id), "window.stop()")?;
-    }
-    #[cfg(mobile)]
-    {
-        let _ = (app, id);
-    }
+    crate::manager::eval_history(&app, TabId(id), "window.stop()")?;
     Ok(())
 }
 
@@ -270,12 +236,10 @@ pub fn tab_zoom(app: AppHandle, id: u64, mode: String) -> Result<TabsSnapshot, c
         };
         model.set_zoom(TabId(id), next).ok_or(crate::CommandError::UnknownTab(id))?
     };
-    #[cfg(desktop)]
     if let Some(view) = state::content_webview(&app, TabId(id)) {
+        // Absolute on every platform (wry Android applies it via JS).
         let _ = view.raw().set_zoom(next);
     }
-    #[cfg(mobile)]
-    let _ = &state;
     crate::manager::notify_tabs_event(&app, "tabs.onUpdated", serde_json::json!({ "id": id, "changeInfo": { "zoom": next } }));
     Ok(snapshot(&app))
 }
@@ -291,13 +255,8 @@ pub fn tab_set_muted(app: AppHandle, id: u64, muted: bool) -> Result<TabsSnapsho
             .set_muted(TabId(id), muted)
             .then_some(())
             .ok_or(crate::CommandError::UnknownTab(id))?;
-        #[cfg(desktop)]
         if let Some(view) = state::content_webview(&app, TabId(id)) {
             let _ = view.eval(&format!("{}({});", crate::manager::MUTE_SCRIPT, muted));
-        }
-        #[cfg(mobile)]
-        if let Some(w) = app.get_webview_window(&crate::manager::content_label(TabId(id))) {
-            let _ = w.eval(format!("{}({});", crate::manager::MUTE_SCRIPT, muted));
         }
     }
     crate::manager::notify_tabs_event(&app, "tabs.onUpdated", serde_json::json!({ "id": id, "changeInfo": { "muted": muted } }));
@@ -808,7 +767,8 @@ pub fn downloads_list(app: AppHandle) -> Vec<DownloadRecord> {
 }
 
 /// Reveal a downloaded file in Finder/Files. Only paths under the
-/// downloads directory are accepted.
+/// downloads directory are accepted. Mobile has no Finder; the honest
+/// equivalent is opening the download's source URL in a new tab.
 #[tauri::command]
 pub fn download_reveal(app: AppHandle, path: String) -> Result<(), crate::CommandError> {
     #[cfg(desktop)]
@@ -827,10 +787,24 @@ pub fn download_reveal(app: AppHandle, path: String) -> Result<(), crate::Comman
             .map_err(|e| crate::CommandError::Message(e.to_string()))?;
         Ok(())
     }
-    #[cfg(not(desktop))]
+    #[cfg(mobile)]
     {
-        let _ = (app, path);
-        Err(crate::CommandError::Message("僅支援桌面版".into()))
+        let record = {
+            let state = app.state::<BrowserState>();
+            let downloads = state::lock(&state.downloads);
+            downloads.iter().find(|d| d.path == path).cloned()
+        };
+        let Some(record) = record else {
+            return Err(crate::CommandError::Message("unknown download".into()));
+        };
+        let url = url::Url::parse(&record.url)
+            .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+        if let Some(window) = app.get_window(state::MAIN_LABEL) {
+            crate::manager::open_tab(&app, &window, Some(url));
+            Ok(())
+        } else {
+            Err(crate::CommandError::Message("main window missing".into()))
+        }
     }
 }
 
@@ -932,8 +906,10 @@ pub fn parse_suggest(body: &str) -> Vec<String> {
 /// Live search suggestions from the configured engine (known engines
 /// only; a custom engine has no known endpoint and returns none). Can be
 /// turned off with setting:suggest_live = "0".
+// Async with the fetch on a blocking thread: sync commands run on the
+// main thread on macOS, and this fetch must never freeze the UI.
 #[tauri::command]
-pub fn suggest(app: AppHandle, query: String) -> Result<Vec<String>, crate::CommandError> {
+pub async fn suggest(app: AppHandle, query: String) -> Result<Vec<String>, crate::CommandError> {
     let q = query.trim().to_owned();
     if q.is_empty() {
         return Ok(Vec::new());
@@ -955,22 +931,36 @@ pub fn suggest(app: AppHandle, query: String) -> Result<Vec<String>, crate::Comm
         // Custom engines have no known suggest endpoint.
         _ => return Ok(Vec::new()),
     };
+    let body = tauri::async_runtime::spawn_blocking(move || fetch_suggest_body(&endpoint))
+        .await
+        .map_err(|e| crate::CommandError::Message(e.to_string()))?;
+    let rows = parse_suggest(&body);
+    eprintln!("suggest: {} rows for {q}", rows.len());
+    Ok(rows)
+}
+
+/// One GET, 3s cap, 64 KiB body; failures are logged so a dead endpoint
+/// stays diagnosable from the app log.
+fn fetch_suggest_body(endpoint: &str) -> String {
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(3))
         .build();
-    let body = agent
-        .get(&endpoint)
-        .call()
-        .ok()
-        .filter(|r| r.status() == 200)
-        .and_then(|r| {
+    match agent.get(endpoint).call() {
+        Ok(resp) if resp.status() == 200 => {
             let mut buf = String::new();
             use std::io::Read;
-            r.into_reader().take(64 * 1024).read_to_string(&mut buf).ok()?;
-            Some(buf)
-        })
-        .unwrap_or_default();
-    Ok(parse_suggest(&body))
+            resp.into_reader().take(64 * 1024).read_to_string(&mut buf).unwrap_or_default();
+            buf
+        }
+        Ok(resp) => {
+            eprintln!("suggest: {endpoint} answered HTTP {}", resp.status());
+            String::new()
+        }
+        Err(e) => {
+            eprintln!("suggest: {endpoint} failed: {e}");
+            String::new()
+        }
+    }
 }
 
 fn urlencode(s: &str) -> String {

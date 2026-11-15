@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, openIncognito, reopenClosed, closeTab, activateTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
   import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
@@ -41,9 +42,50 @@
     void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
   });
 
+  // Mobile: the tab sheet, panels, find bar, help dialog and the
+  // omnibox suggestion dropdown render in the full-screen main webview,
+  // which the native content webviews stack above. Opening any of them
+  // must lift the main webview to the front (overlay_set_open ->
+  // raise_main_chrome) or they stay hidden behind the active page and
+  // cannot be tapped.
+  $effect(() => {
+    if (!isMobile) return;
+    const overlay =
+      tabs.sheetOpen ||
+      ui.panel !== null ||
+      ui.findOpen ||
+      ui.help !== null ||
+      ui.mobileMenu ||
+      ui.omniOpen;
+    void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
+  });
+
   onMount(() => {
     void init();
     void initUi();
+    if (isMobile) {
+      // The Rust layout cannot derive mobile geometry itself: tauri
+      // reports scale 1.0 on Android (so CSS px cannot be converted),
+      // and tao keeps the pre-inset window size when system bars or the
+      // IME shrink the decor frame. Report the bar and this viewport in
+      // physical px instead; Rust re-lays-out content webviews on every
+      // report, so keyboard and rotation flows stay live.
+      const reportChrome = () => {
+        const bar = document.querySelector<HTMLElement>(".bottom-bar");
+        if (!bar) return;
+        const dpr = window.devicePixelRatio;
+        const bottomBarPx = Math.round(bar.offsetHeight * dpr);
+        const viewportWPx = Math.round(window.innerWidth * dpr);
+        const viewportHPx = Math.round(window.innerHeight * dpr);
+        if (bottomBarPx > 0) {
+          invoke("chrome_metrics_set", { bottomBarPx, viewportWPx, viewportHPx }).catch((e) =>
+            console.error(String(e)),
+          );
+        }
+      };
+      setTimeout(() => void reportChrome(), 50);
+      window.addEventListener("resize", () => void reportChrome());
+    }
     const onNavigate = (e: Event) => {
       const url = (e as CustomEvent<string>).detail;
       if (typeof url === "string") void navigateActive(url);
@@ -177,13 +219,16 @@
       {#if tabs.list.length === 0}
         <p>沒有分頁。點下方分頁按鈕新增。</p>
       {:else}
-        <p class="mobile-note">分頁內容以每分頁視窗呈現；作用分頁：</p>
+        <p class="mobile-note">多分頁已啟用；作用分頁：</p>
         <p class="mobile-url">{activeUrl ?? "（空白分頁）"}</p>
       {/if}
       {#if tabs.error}
         <p class="mobile-error">{tabs.error}</p>
       {/if}
     </div>
+    <FindBar />
+    <Panel />
+    <HelpDialog />
     <BottomBar />
   </main>
 {:else}
@@ -213,7 +258,9 @@
   .mobile {
     display: flex;
     flex-direction: column;
-    /* dvh keeps the bottom bar above the home indicator on iOS. */
+    /* dvh keeps the bottom bar above the home indicator on iOS, and
+       tracks the window while the Android IME is open (the activity
+       fits the decor, so adjustResize shrinks the viewport). */
     height: 100vh;
     height: 100dvh;
   }

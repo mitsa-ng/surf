@@ -33,6 +33,12 @@ export const ui = $state<{
   pwPrompt: null | { host: string; user: string };
   /** Saved logins for the settings panel (host + user). */
   passwords: ipc.PasswordRow[];
+  /** Mobile overflow menu (BottomBar 更多 button). */
+  mobileMenu: boolean;
+  /** Mobile: the omnibox suggestion dropdown is showing (the main
+      webview must sit above the content views or the dropdown is
+      untappable). */
+  omniOpen: boolean;
 }>({
   panel: null,
   extensions: [],
@@ -54,6 +60,8 @@ export const ui = $state<{
   suggestLive: true,
   pwPrompt: null,
   passwords: [],
+  mobileMenu: false,
+  omniOpen: false,
 });
 
 const ENGINE_LABELS: Record<string, string> = {

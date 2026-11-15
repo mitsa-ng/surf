@@ -18,8 +18,9 @@ impl FilterCapabilities {
     pub const APPLE: Self = Self { block: true, redirect: false, modify_headers: false };
     /// WebView2 WebResourceRequested can inspect and replace responses.
     pub const WEBVIEW2: Self = Self { block: true, redirect: true, modify_headers: true };
-    /// shouldInterceptRequest can block and substitute responses.
-    pub const ANDROID: Self = Self { block: true, redirect: true, modify_headers: false };
+    /// shouldInterceptRequest as Surf wires it substitutes an empty
+    /// response — block-only, no redirect target.
+    pub const ANDROID: Self = Self { block: true, redirect: false, modify_headers: false };
     /// WebKitGTK (WebKitUserContentFilter) is block-only like Apple.
     pub const WEBKITGTK: Self = Self { block: true, redirect: false, modify_headers: false };
 }

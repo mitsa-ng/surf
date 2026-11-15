@@ -65,8 +65,9 @@ impl ApiModule for StorageModule {
     }
 }
 
-/// tabs.* over the Rust tab model. create/activate/close are desktop-only
-/// for now (mobile multi-tab is M2); list works everywhere.
+/// tabs.* over the Rust tab model. All platforms share the same
+/// manager paths now that mobile runs child webviews of the main
+/// window.
 pub struct TabsModule {
     app: tauri::AppHandle,
 }
@@ -90,54 +91,32 @@ impl ApiModule for TabsModule {
                 Ok(json!(model.list()))
             }
             "create" => {
-                #[cfg(not(desktop))]
-                {
-                    let _ = args;
-                    Err(ApiError::Denied("mobile multi-tab lands with instance-swap (M2)".into()))
-                }
-                #[cfg(desktop)]
-                {
-                    let url = args.get("url").and_then(|v| v.as_str());
-                    let window = self
-                        .app
-                        .get_window(crate::state::MAIN_LABEL)
-                        .ok_or_else(|| ApiError::Denied("main window missing".into()))?;
-                    let parsed = match url {
-                        Some(u) => Some(
-                            url::Url::parse(u)
-                                .map_err(|e| ApiError::Denied(format!("bad url: {e}")))?,
-                        ),
-                        None => None,
-                    };
-                    let id = manager::open_tab(&self.app, &window, parsed);
-                    Ok(json!({ "id": id.0 }))
-                }
+                // Multi-tab is unified: mobile runs the same attach path
+                // (child webviews of the main window).
+                let url = args.get("url").and_then(|v| v.as_str());
+                let window = self
+                    .app
+                    .get_window(crate::state::MAIN_LABEL)
+                    .ok_or_else(|| ApiError::Denied("main window missing".into()))?;
+                let parsed = match url {
+                    Some(u) => Some(
+                        url::Url::parse(u)
+                            .map_err(|e| ApiError::Denied(format!("bad url: {e}")))?,
+                    ),
+                    None => None,
+                };
+                let id = manager::open_tab(&self.app, &window, parsed);
+                Ok(json!({ "id": id.0 }))
             }
             "activate" => {
-                #[cfg(not(desktop))]
-                {
-                    let _ = args;
-                    Err(ApiError::Denied("mobile multi-tab lands with instance-swap (M2)".into()))
-                }
-                #[cfg(desktop)]
-                {
-                    let id = args.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-                    manager::activate_tab(&self.app, TabId(id)).map_err(|e| ApiError::Denied(e.to_string()))?;
-                    Ok(json!({ "ok": true }))
-                }
+                let id = args.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                manager::activate_tab(&self.app, TabId(id)).map_err(|e| ApiError::Denied(e.to_string()))?;
+                Ok(json!({ "ok": true }))
             }
             "close" => {
-                #[cfg(not(desktop))]
-                {
-                    let _ = args;
-                    Err(ApiError::Denied("mobile multi-tab lands with instance-swap (M2)".into()))
-                }
-                #[cfg(desktop)]
-                {
-                    let id = args.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-                    manager::close_tab(&self.app, TabId(id)).map_err(|e| ApiError::Denied(e.to_string()))?;
-                    Ok(json!({ "ok": true }))
-                }
+                let id = args.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                manager::close_tab(&self.app, TabId(id)).map_err(|e| ApiError::Denied(e.to_string()))?;
+                Ok(json!({ "ok": true }))
             }
             _ => Err(ApiError::UnknownMethod { module: self.name().to_owned(), method: method.to_owned() }),
         }

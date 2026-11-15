@@ -18,7 +18,7 @@ use std::os::fd::{AsFd, AsRawFd};
 
 use super::{
   ASSET_LOADER_DOMAIN, EVAL_CALLBACKS, IPC, ON_LOAD_HANDLER, PERMISSION_HANDLER, REQUEST_HANDLER,
-  TITLE_CHANGE_HANDLER, URL_LOADING_OVERRIDE,
+  TITLE_CHANGE_HANDLER, URL_LOADING_OVERRIDE, request_blocked,
   main_pipe::{MAIN_PIPE, MainPipe},
 };
 
@@ -97,6 +97,34 @@ macro_rules! android_binding {
   }};
 }
 
+fn extract_url(env: &mut JNIEnv, request: &JObject) -> JniResult<String> {
+  let uri = env
+    .call_method(request, "getUrl", "()Landroid/net/Uri;", &[])?
+    .l()?;
+  let url: JString = env
+    .call_method(&uri, "toString", "()Ljava/lang/String;", &[])?
+    .l()?
+    .into();
+  Ok(env.get_string(&url)?.to_string_lossy().to_string())
+}
+
+/// Empty 200 response that aborts a blocked subresource without a
+/// network round trip — the same shape a content blocker hands the
+/// engine on desktop platforms.
+fn blocked_response(env: &mut JNIEnv) -> JniResult<jobject> {
+  let mime = env.new_string("text/plain")?;
+  let byte_array = env.byte_array_from_slice(&[])?;
+  let byte_array_input_stream = env.find_class("java/io/ByteArrayInputStream")?;
+  let stream = env.new_object(byte_array_input_stream, "([B)V", &[(&byte_array).into()])?;
+  let web_resource_response_class = env.find_class("android/webkit/WebResourceResponse")?;
+  let web_resource_response = env.new_object(
+    web_resource_response_class,
+    "(Ljava/lang/String;Ljava/lang/String;Ljava/io/InputStream;)V",
+    &[(&mime).into(), (&mime).into(), (&stream).into()],
+  )?;
+  Ok(*web_resource_response)
+}
+
 fn handle_request(
   env: &mut JNIEnv,
   webview_id: JString,
@@ -105,6 +133,23 @@ fn handle_request(
 ) -> JniResult<jobject> {
   let webview_id = env.get_string(&webview_id)?;
   let webview_id = webview_id.to_str().unwrap_or_default();
+
+  // SURF PATCH: the global subresource blocker applies to every
+  // webview, so it runs before the per-webview handler lookup (which
+  // returns null for content tabs that registered no custom protocol).
+  // Main frames are navigation-filter territory, and any extraction
+  // failure fails open to normal loading.
+  let url = match extract_url(env, &request) {
+    Ok(url) => url,
+    Err(_) => return Ok(*JObject::null()),
+  };
+  let for_main_frame = env
+    .call_method(&request, "isForMainFrame", "()Z", &[])
+    .and_then(|z| z.z())
+    .unwrap_or(true);
+  if !for_main_frame && request_blocked(&url) {
+    return blocked_response(env);
+  }
 
   let Some(handler) = REQUEST_HANDLER
     .lock()
@@ -121,15 +166,6 @@ fn handle_request(
       .entered();
 
   let mut request_builder = Request::builder();
-
-  let uri = env
-    .call_method(&request, "getUrl", "()Landroid/net/Uri;", &[])?
-    .l()?;
-  let url: JString = env
-    .call_method(&uri, "toString", "()Ljava/lang/String;", &[])?
-    .l()?
-    .into();
-  let url = env.get_string(&url)?.to_string_lossy().to_string();
 
   #[cfg(feature = "tracing")]
   span.record("uri", &url);
@@ -277,8 +313,17 @@ pub unsafe fn onFirstActivityCreateWry(env: JNIEnv, _: JClass) {
         if libc::read(fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len())
           == buf.len() as libc::ssize_t
         {
-          // unregister itself on errors
-          main_pipe.recv().is_ok()
+          // SURF PATCH: a single failing message used to unregister this
+          // callback, killing every later MainPipe message (webview
+          // creates never processed; the tao thread parks on the
+          // response). Log and keep the pipe alive instead.
+          match main_pipe.recv() {
+            Ok(()) => true,
+            Err(e) => {
+              eprintln!("MainPipe message error (pipe kept alive): {e:?}");
+              true
+            }
+          }
         } else {
           // unregister itself
           false

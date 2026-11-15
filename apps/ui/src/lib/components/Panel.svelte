@@ -50,7 +50,7 @@
   .scrim {
     position: fixed;
     inset: 0;
-    z-index: 1;
+    z-index: 30;
     background: rgba(0, 0, 0, 0.2);
   }
   .drawer {
@@ -58,12 +58,26 @@
     top: 0;
     right: 0;
     bottom: 0;
-    z-index: 2;
+    z-index: 31;
     width: min(360px, 90vw);
     overflow-y: auto;
     padding: 8px 16px 16px;
     background: var(--panel);
     border-left: 1px solid var(--hairline);
+  }
+  /* Mobile: the drawer becomes a bottom sheet above the bottom bar —
+     top must be cleared or the base rule's top:0 keeps it full-height
+     and it swallows the scrim. */
+  :global(.mobile) .drawer {
+    left: 0;
+    right: 0;
+    bottom: calc(88px + env(safe-area-inset-bottom));
+    top: auto;
+    max-height: 78vh;
+    width: auto;
+    border-left: none;
+    border-top: 1px solid var(--hairline);
+    border-radius: 16px 16px 0 0;
   }
   header {
     display: flex;

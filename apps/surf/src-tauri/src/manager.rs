@@ -60,7 +60,6 @@ pub fn notify_tabs_event(app: &AppHandle, name: &str, payload: serde_json::Value
 
 /// Journal a committed navigation into the model and refresh the
 /// mirrored back/forward flags; only a flag change re-broadcasts.
-#[cfg(desktop)]
 fn record_navigation(app: &AppHandle, id: TabId, url: &Url) {
     let changed = {
         let state = app.state::<BrowserState>();
@@ -91,18 +90,19 @@ fn arm_loading_watchdog(app: &AppHandle, id: TabId) {
     });
 }
 
-/// Create a tab. Desktop attaches a content webview; mobile records the
-/// model entry only (webview-per-tab lands in M2).
+/// Create a tab and attach its content webview to the main window; the
+/// platform layout pass positions it.
 pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabId {
     let id = {
         let state = app.state::<BrowserState>();
         let id = state::lock(&state.model).open(url.clone());
         id
     };
-    #[cfg(desktop)]
     attach_webview(app, window, id, url);
-    #[cfg(not(desktop))]
-    let _ = window;
+    // No mobile relayout here: it runs inside the posted attach task.
+    // The ipc thread holds wry's IPC lock while a command executes, and
+    // relayout's inner_size() blocks on the tao loop — the same loop the
+    // attach task needs the IPC lock on. Circular wait.
     persist_session(app);
     emit_tabs(app);
     notify_tabs_event(
@@ -115,7 +115,6 @@ pub fn open_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabI
 
 /// Open a private (incognito) tab: no history recording, never written
 /// to the persisted session.
-#[cfg(desktop)]
 pub fn open_private_tab(app: &AppHandle, window: &Window<Wry>, url: Option<Url>) -> TabId {
     let id = {
         let state = app.state::<BrowserState>();
@@ -284,20 +283,52 @@ fn page_load_update(app: &AppHandle, id: TabId, url: Option<Url>, started: bool)
 
 fn title_update(app: &AppHandle, id: TabId, title: String) {
     let state = app.state::<BrowserState>();
-    let tab_url = state::lock(&state.model).get(id).and_then(|t| t.url.clone());
+    let (tab_url, incognito) = {
+        let model = state::lock(&state.model);
+        let tab = model.get(id);
+        (tab.and_then(|t| t.url.clone()), tab.map(|t| t.incognito).unwrap_or(false))
+    };
     state::lock(&state.model).set_title(id, title.clone());
     // History rows are written at commit (before the document title
-    // exists); backfill the newest row so history shows real titles.
-    if let Some(u) = tab_url {
+    // exists); backfill the newest row so history shows real titles. A
+    // private tab wrote no visit, so it must not touch the row a normal
+    // visit created.
+    if let Some(u) = tab_url.filter(|_| !incognito) {
         let _ = state::lock(&state.db).history_set_title(&u, &title);
     }
+    // The persisted session captured the interim host title at commit;
+    // re-persist so a restart restores the real document title.
+    persist_session(app);
     emit_tabs(app);
     notify_tabs_event(app, "tabs.onUpdated", serde_json::json!({ "id": id.0, "changeInfo": { "title": title } }));
 }
 
-#[cfg(desktop)]
 fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<Url>) {
+    #[cfg(mobile)]
+    {
+        // add_child blocks on the main thread while the runtime's
+        // webview-create re-enters the event loop and waits for it:
+        // self-deadlock from any other thread. On the loop thread tao
+        // runs the create inline (the same path boot restore uses), so
+        // the attach must happen there.
+        let app = app.clone();
+        let window_for_thread = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            attach_webview_on_main(&app, &window_for_thread, id, url);
+        });
+        return;
+    }
+    #[cfg(desktop)]
+    attach_webview_on_main(app, window, id, url);
+}
+
+fn attach_webview_on_main(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<Url>) {
     let state = app.state::<BrowserState>();
+    if state::lock(&state.model).get(id).is_none() {
+        // The tab was closed between the open call and this deferred
+        // attach; a webview for a dead tab would be an orphan layer.
+        return;
+    }
     let is_active = state::lock(&state.model).active_id() == Some(id);
     let tab_incognito = state::lock(&state.model).get(id).map(|t| t.incognito).unwrap_or(false);
     let label = content_label(id);
@@ -389,7 +420,11 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
             if let Some(chrome) = app.get_webview(crate::layout::CHROME_LABEL) {
                 let _ = chrome.set_focus();
             }
-            #[cfg(debug_assertions)]
+            // Opening from the sheet leaves the sheet up; keep its rows
+            // touchable above the freshly shown tab.
+            #[cfg(mobile)]
+            crate::layout::restore_overlay_front(app);
+            #[cfg(all(debug_assertions, desktop))]
             diagnose_bridge(&app.clone(), id);
         }
         Err(e) => {
@@ -398,7 +433,6 @@ fn attach_webview(app: &AppHandle, window: &Window<Wry>, id: TabId, url: Option<
     }
 }
 
-#[cfg(desktop)]
 pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     let reopen_info = snapshot_for_reopen(&state, id);
@@ -415,14 +449,17 @@ pub fn close_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> 
             let _ = view.show();
         }
     }
-    let _ = state::lock(&state.db).delete_tab(id);
+    // Showing the successor buries the main webview; when the tab sheet
+    // (overlay) is still open its rows must stay touchable.
+    #[cfg(mobile)]
+    crate::layout::restore_overlay_front(app);
+    let _ = state::lock(&app.state::<BrowserState>().db).delete_tab(id);
     persist_session(app);
     emit_tabs(app);
     notify_tabs_event(app, "tabs.onRemoved", serde_json::json!({ "id": id.0 }));
     Ok(())
 }
 
-#[cfg(desktop)]
 pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     if !state::lock(&state.model).activate(id) {
@@ -440,7 +477,6 @@ pub fn activate_tab(app: &AppHandle, id: TabId) -> Result<(), crate::CommandErro
     Ok(())
 }
 
-#[cfg(desktop)]
 pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::CommandError> {
     let target = match urlbox::resolve(input) {
         OmniboxResult::Navigate(url) => url,
@@ -463,7 +499,6 @@ pub fn navigate(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::Co
     Ok(())
 }
 
-#[cfg(desktop)]
 pub fn eval_history(app: &AppHandle, id: TabId, js: &str) -> Result<(), crate::CommandError> {
     let state = app.state::<BrowserState>();
     if state::lock(&state.model).get(id).is_none() {
@@ -588,145 +623,64 @@ pub fn restore_split(state: &BrowserState, id_by_position: &std::collections::Ha
     Some((a, b))
 }
 
-// Mobile instance-swap: one WebviewWindow per tab. Tauri mobile supports
-// multiple windows; switching shows the target so it takes the stack
-// front. Windows are created lazily — restoring a session only materialises
-// the active tab.
+// Mobile shares the desktop architecture: every tab is a child webview
+// of the main window, stacked and shown/hidden by the layout pass. (The
+// earlier one-WebviewWindow-per-tab design blocked on tao's second
+// window creation hanging on Android; child webviews avoid it.)
 
 #[cfg(mobile)]
-fn tab_window(app: &AppHandle, id: TabId) -> Option<tauri::WebviewWindow<Wry>> {
-    app.get_webview_window(&content_label(id))
+fn main_window(app: &AppHandle) -> Result<tauri::Window<Wry>, crate::CommandError> {
+    app.get_window(crate::state::MAIN_LABEL)
+        .ok_or_else(|| crate::CommandError::Message("main window missing".into()))
 }
 
 #[cfg(mobile)]
-pub fn ensure_tab_window(app: &AppHandle, id: TabId, url: Option<Url>) -> Result<tauri::WebviewWindow<Wry>, tauri::Error> {
-    if let Some(w) = tab_window(app, id) {
-        return Ok(w);
+pub fn ensure_tab_webview(app: &AppHandle, id: TabId, url: Option<Url>) -> Result<(), tauri::Error> {
+    if state::content_webview(app, id).is_some() {
+        return Ok(());
     }
-    let state = app.state::<BrowserState>();
-    let token = state.cs_tokens.issue(id);
-    drop(state);
-    crate::content_bridge::register_content_sink(app, id);
-    let window_url = match &url {
-        Some(u) => tauri::WebviewUrl::External(u.clone()),
-        None => tauri::WebviewUrl::App("start.html".into()),
-    };
-    let nav_handle = app.clone();
-    let nav_tab = id;
-    let load_handle = app.clone();
-    let title_handle = app.clone();
-    tauri::WebviewWindowBuilder::new(app, content_label(id), window_url)
-        .title("Surf")
-        .initialization_script(crate::content_bridge::bootstrap_script(&token))
-        .on_navigation(move |url| nav_verdict(&nav_handle, nav_tab, url))
-        .on_page_load(move |_w, payload| {
-            let url = Some(payload.url().clone());
-            let started = payload.event() == tauri::webview::PageLoadEvent::Started;
-            page_load_update(&load_handle, id, url, started);
-        })
-        .on_document_title_changed(move |_w, title| title_update(&title_handle, id, title))
-        .build()?;
-    #[cfg(target_os = "ios")]
-    crate::filters::apply_filters(app, id);
-    Ok(tab_window(app, id).expect("window just built"))
-}
-
-#[cfg(mobile)]
-pub fn model_open(app: &AppHandle, url: Option<Url>) -> TabId {
-    let state = app.state::<BrowserState>();
-    let id = state::lock(&state.model).open(url.clone());
-    if let Some(u) = &url {
-        state::lock(&state.model).set_url(id, u.clone());
-    }
-    id
-}
-
-#[cfg(mobile)]
-pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
-    let id = model_open(app, url.clone());
-    let _ = ensure_tab_window(app, id, url);
-    persist_session(app);
-    emit_tabs(app);
-    notify_tabs_event(
-        app,
-        "tabs.onCreated",
-        serde_json::to_value(state::lock(&app.state::<BrowserState>().model).get(id)).unwrap_or(serde_json::Value::Null),
-    );
-    id
-}
-
-#[cfg(mobile)]
-pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
-    let state = app.state::<BrowserState>();
-    let reopen_info = snapshot_for_reopen(&state, id);
-    let closed = state::lock(&state.model)
-        .close(id)
-        .ok_or(crate::CommandError::UnknownTab(id.0))?;
-    remember_closed(&state, reopen_info);
-    exit_split_on_close(&state, id);
-    state.cs_tokens.revoke(id);
-    state::lock(&state.router).unsubscribe_all(&surf_ext_host::router::Endpoint::Content(id));
-    drop(state);
-    if let Some(w) = tab_window(app, id) {
-        let _ = w.close();
-    }
-    if let Some(next) = closed.new_active {
-        if let Some(w) = tab_window(app, next) {
-            let _ = w.show();
+    // A model entry must exist before the webview attaches; restore and
+    // deep-link paths may arrive without one.
+    let exists = state::lock(&app.state::<BrowserState>().model).get(id).is_some();
+    if !exists {
+        let opened = state::lock(&app.state::<BrowserState>().model).open(url.clone());
+        if opened != id {
+            return Err(tauri::Error::WindowNotFound);
+        }
+        if let Some(u) = &url {
+            state::lock(&app.state::<BrowserState>().model).set_url(id, u.clone());
         }
     }
-    persist_session(app);
-    emit_tabs(app);
-    notify_tabs_event(app, "tabs.onRemoved", serde_json::json!({ "id": id.0 }));
+    let window = app
+        .get_window(crate::state::MAIN_LABEL)
+        .ok_or(tauri::Error::WindowNotFound)?;
+    attach_webview(app, &window, id, url);
     Ok(())
 }
 
 #[cfg(mobile)]
+pub fn open_tab_mobile(app: &AppHandle, url: Option<Url>) -> TabId {
+    let window = main_window(app).expect("main window exists");
+    open_tab(app, &window, url)
+}
+
+#[cfg(mobile)]
+pub fn close_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
+    close_tab(app, id)
+}
+
+#[cfg(mobile)]
 pub fn activate_tab_mobile(app: &AppHandle, id: TabId) -> Result<(), crate::CommandError> {
-    let state = app.state::<BrowserState>();
-    let url = {
-        if !state::lock(&state.model).activate(id) {
-            return Err(crate::CommandError::UnknownTab(id.0));
-        }
-        state::lock(&state.model).get(id).and_then(|t| t.url.clone())
-    };
-    drop(state);
-    match tab_window(app, id) {
-        Some(w) => {
-            let _ = w.show();
-        }
-        None => {
-            if let Err(e) = ensure_tab_window(app, id, url) {
-                eprintln!("mobile tab window create failed: {e}");
-            }
-        }
-    }
-    emit_tabs(app);
-    notify_tabs_event(app, "tabs.onActivated", serde_json::json!({ "id": id.0 }));
+    activate_tab(app, id)?;
+    // relayout() marshals itself to the tao loop on mobile; calling it
+    // from the ipc thread is safe by construction now.
+    let _ = crate::layout::relayout(app);
     Ok(())
 }
 
 #[cfg(mobile)]
 pub fn navigate_mobile(app: &AppHandle, id: TabId, input: &str) -> Result<(), crate::CommandError> {
-    let target = match urlbox::resolve(input) {
-        OmniboxResult::Navigate(url) => url,
-        OmniboxResult::Search(q) => search_url(app, &q),
-    };
-    let state = app.state::<BrowserState>();
-    {
-        let mut model = state::lock(&state.model);
-        if model.get(id).is_none() {
-            return Err(crate::CommandError::UnknownTab(id.0));
-        }
-        model.set_url(id, target.clone());
-        model.set_loading(id, true);
-    }
-    drop(state);
-    if let Some(w) = tab_window(app, id) {
-        let _ = w.eval(format!("location.replace({:?})", target.as_str()));
-    }
-    emit_tabs(app);
-    Ok(())
+    navigate(app, id, input)
 }
 
 #[cfg(test)]
@@ -738,7 +692,7 @@ mod tests {
     fn closed_tab_is_captured_before_removal_and_privates_are_skipped() {
         let db = surf_core::storage::Db::open(":memory:").unwrap();
         let dir = std::env::temp_dir().join(format!("surf-test-favicons-{}", std::process::id()));
-        let state = BrowserState::new(db, dir);
+        let state = BrowserState::new(db, dir, None);
         let url = Url::parse("https://closed.example/").unwrap();
         let normal = state::lock(&state.model).open(Some(url.clone()));
         let private = state::lock(&state.model).open_private(Some(url.clone()));

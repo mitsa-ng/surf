@@ -88,14 +88,39 @@ impl RequestFilterAdapter for WebView2Adapter {
 #[cfg(target_os = "android")]
 pub struct AndroidInterceptAdapter;
 
+/// Raw-URL subresource verdict: unparseable URLs fail open, matching
+/// the navigation filter, so a malformed request never wedges a page.
+/// Outside Android this is only exercised by tests.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn subresource_allowed(nav: &crate::nav_filter::NavFilter, url: &str) -> bool {
+    match url::Url::parse(url) {
+        Ok(u) => nav.allows(&u),
+        Err(_) => true,
+    }
+}
+
 #[cfg(target_os = "android")]
 impl RequestFilterAdapter for AndroidInterceptAdapter {
     fn capabilities(&self) -> FilterCapabilities {
         FilterCapabilities::ANDROID
     }
 
-    fn install(&self, _app: &AppHandle<Wry>, _label: &str, _rules: &[String]) -> Result<(), FilterInstallError> {
-        Err(FilterInstallError::NotImplemented("wry does not expose shouldInterceptRequest to Rust"))
+    fn install(&self, app: &AppHandle<Wry>, _label: &str, _rules: &[String]) -> Result<(), FilterInstallError> {
+        // shouldInterceptRequest is process-global in wry's Android
+        // binding, so one predicate covers every tab. It consults the
+        // same engine thread nav_filter runs — reloading rules restarts
+        // that thread, so the closure never goes stale — and with no
+        // filters configured the engine is absent and allows() fails
+        // open without a roundtrip. URL-only verdicts: wry hands over
+        // the request URL, not the page URL, so $domain= rules behave
+        // as if unspecified.
+        let handle = app.clone();
+        // Blocker contract is "true = block", the inverse of allows().
+        tauri::wry::prelude::set_request_blocker(Some(Box::new(move |url| {
+            let state = handle.state::<BrowserState>();
+            !subresource_allowed(&state.nav_filter, url)
+        })));
+        Ok(())
     }
 }
 
@@ -145,7 +170,21 @@ fn install_now(app: &AppHandle, id: TabId) {
             eprintln!("[filters] {label}: {e}");
         }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    // The Android blocker is process-global; installing per tab just
+    // means the first tab to finish a load arms it.
+    #[cfg(target_os = "android")]
+    {
+        let filters = {
+            let state = app.state::<BrowserState>();
+            let db = state::lock(&state.db);
+            crate::nav_filter::load_filters(&db)
+        };
+        let label = content_label(id);
+        if let Err(e) = AndroidInterceptAdapter.install(app, &label, &filters) {
+            eprintln!("[filters] {label}: {e}");
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
     let _ = (app, id);
 }
 
@@ -175,5 +214,23 @@ pub fn refresh_all(app: &AppHandle) {
     };
     for id in ids {
         apply_filters(app, id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_blocker_verdict_blocks_and_fails_open() {
+        let nav = crate::nav_filter::NavFilter::default();
+        // No engine configured: everything allowed, no roundtrip.
+        assert!(subresource_allowed(&nav, "https://ads.example/x.js"));
+        nav.start(vec!["||ads.example^".into()]);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(!subresource_allowed(&nav, "https://ads.example/tracker.js"));
+        assert!(subresource_allowed(&nav, "https://ok.example/app.js"));
+        // Malformed URL: fail open like the navigation filter.
+        assert!(subresource_allowed(&nav, "not a url"));
     }
 }

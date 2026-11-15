@@ -3982,20 +3982,37 @@ fn handle_user_message<T: UserEvent>(
           },
         )
       });
-      if let Some((Some(window), options)) = window {
-        match handler(&window, options) {
-          Ok(webview) => {
-            if let Some(w) = windows.0.borrow_mut().get_mut(&window_id) {
-              w.webviews.push(webview);
-              w.has_children.store(true, Ordering::Relaxed);
-            }
-            // SAFETY: The caller calls blocking `rx.recv()` so the receiver will never be dropped before this
-            sender.send(Ok(())).unwrap();
+      // SURF PATCH: a lookup miss must answer the caller; staying silent
+      // parks the blocking rx.recv() forever (the multiwebview create
+      // deadlock) with no diagnostic.
+      let Some((Some(window), options)) = window else {
+        let keys: Vec<String> = windows
+          .0
+          .borrow()
+          .keys()
+          .map(|k| format!("{k:?}"))
+          .collect();
+        eprintln!(
+          "CreateWebview miss: window_id {window_id:?} not in [{}] (or inner missing)",
+          keys.join(", ")
+        );
+        let _ = sender.send(Err(Error::CreateWebview(Box::new(std::io::Error::other(
+          format!("window {window_id:?} not found for webview creation"),
+        )))));
+        return;
+      };
+      match handler(&window, options) {
+        Ok(webview) => {
+          if let Some(w) = windows.0.borrow_mut().get_mut(&window_id) {
+            w.webviews.push(webview);
+            w.has_children.store(true, Ordering::Relaxed);
           }
-          Err(e) => {
-            // SAFETY: The caller calls blocking `rx.recv()` so the receiver will never be dropped before this
-            sender.send(Err(e)).unwrap();
-          }
+          // SAFETY: The caller calls blocking `rx.recv()` so the receiver will never be dropped before this
+          sender.send(Ok(())).unwrap();
+        }
+        Err(e) => {
+          // SAFETY: The caller calls blocking `rx.recv()` so the receiver will never be dropped before this
+          sender.send(Err(e)).unwrap();
         }
       }
     }

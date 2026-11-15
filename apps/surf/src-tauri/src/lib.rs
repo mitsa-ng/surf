@@ -8,6 +8,8 @@ mod content_bridge;
 mod deep_links;
 mod ext_scheme;
 mod favicon;
+#[cfg(target_os = "android")]
+mod file_secrets;
 mod filters;
 mod keychain;
 mod layout;
@@ -54,7 +56,11 @@ pub fn run() {
                 .app_cache_dir()
                 .map(|d| d.join("favicons"))
                 .unwrap_or_else(|_| data_dir.join("favicons"));
-            app.manage(state::BrowserState::new(db, favicon_dir));
+            #[cfg(target_os = "android")]
+            let secrets_dir = Some(data_dir.join("secrets"));
+            #[cfg(not(target_os = "android"))]
+            let secrets_dir = None;
+            app.manage(state::BrowserState::new(db, favicon_dir, secrets_dir));
 
             state::setup(app)
         })
@@ -103,6 +109,7 @@ pub fn run() {
             commands::pick_sync_file,
             layout::panel_set_open,
             layout::overlay_set_open,
+            layout::chrome_metrics_set,
             agent::agent_panel_set_open,
             layout::bookmarks_bar_set_open,
             layout::split_set,

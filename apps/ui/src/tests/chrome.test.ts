@@ -30,6 +30,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import App from "../App.svelte";
+import BottomBar from "../lib/components/BottomBar.svelte";
 import Favicon from "../lib/components/Favicon.svelte";
 import TabMenu from "../lib/components/TabMenu.svelte";
 import { applySnapshot } from "../lib/tabs.svelte";
@@ -207,6 +208,37 @@ describe("tab menu", () => {
     await unmount(app2);
     document.body.innerHTML = "";
   });
+
+  it("paste-and-go runs surf:// text as a browser command, never a page load", async () => {
+    seedTabs([{ id: 5, url: "https://a.example/", title: "A", loading: false }]);
+    const calls: string[] = [];
+    invokeMock.mockImplementation((async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "get_tabs") return { tabs: [], active: null };
+      // TabMenu refreshes bookmarks on mount; a null here would poison
+      // ui.bookmarks for every later test.
+      if (cmd === "bookmarks_list") return [];
+      return null;
+    }) as typeof invokeMockImpl);
+    // jsdom ships no clipboard; the stub feeds paste-and-go directly.
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { readText: async () => "surf://settings" } });
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    ui.tabMenu = { x: 20, y: 20, tabId: 5 };
+    const app = mount(TabMenu, { target });
+    await new Promise((r) => setTimeout(r, 10));
+    const paste = Array.from(target.querySelectorAll<HTMLButtonElement>(".menu button")).find((b) =>
+      (b.textContent ?? "").includes("貼上並前往"),
+    )!;
+    paste.click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(ui.panel, "internal command ran").toBe("settings");
+    expect(calls).not.toContain("tab_navigate");
+    vi.unstubAllGlobals();
+    invokeMock.mockImplementation(invokeMockImpl);
+    await unmount(app);
+    document.body.innerHTML = "";
+  });
 });
 
 describe("agent panel", () => {
@@ -319,5 +351,63 @@ describe("help dialog", () => {
     expect(dialog, "dialog missing").toBeTruthy();
     expect(dialog!.textContent).toContain("安靜極簡");
     await unmount(app);
+  });
+});
+
+describe("omnibox live suggestions", () => {
+  beforeEach(() => {
+    invokeMock.mockImplementation(invokeMockImpl);
+    document.body.innerHTML = "";
+  });
+
+  it("renders engine rows above the local rows once they resolve", async () => {
+    invokeMock.mockImplementation((async (cmd: string) => {
+      if (cmd === "get_tabs") return { tabs: [], active: null };
+      if (cmd === "suggest") return ["weather 台南", "weather forecast"];
+      return [];
+    }) as typeof invokeMockImpl);
+    const { app, target } = await renderApp();
+    const input = target.querySelector<HTMLInputElement>("input.address");
+    expect(input, "address input missing").toBeTruthy();
+    input!.focus();
+    input!.value = "weath";
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    // debounce (150ms) + microtasks
+    await new Promise((r) => setTimeout(r, 300));
+    const rows = target.querySelectorAll('[role="option"]');
+    const text = Array.from(rows).map((r) => r.textContent ?? "");
+    expect(text.some((t) => t.includes("weather 台南")), "engine row missing").toBe(true);
+    expect(text.some((t) => t.includes("weather forecast")), "engine row missing").toBe(true);
+    expect(text.some((t) => t.includes("weath")), "local search row missing").toBe(true);
+    await unmount(app);
+  });
+
+  it("selects a row on pointerdown before the touch blur can tear the dropdown down", async () => {
+    const seen: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    invokeMock.mockImplementation((async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "get_tabs") return { tabs: [{ id: 1, url: "https://example.org/" }], active: 1 };
+      if (cmd === "suggest") return [];
+      seen.push({ cmd, args });
+      return null;
+    }) as typeof invokeMockImpl);
+    seedTabs([{ id: 1, url: "https://example.org/" }]);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const bar = mount(BottomBar, { target });
+    const input = target.querySelector<HTMLInputElement>("input.address");
+    input!.focus();
+    input!.value = "weath";
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 250));
+    const row = target.querySelector<HTMLButtonElement>('[role="option"]');
+    expect(row, "suggestion row missing").toBeTruthy();
+    // Android moves focus on touchstart: pointerdown is the only event
+    // still guaranteed to land while the row is attached.
+    row!.dispatchEvent(new Event("pointerdown", { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 100));
+    const nav = seen.find((s) => s.cmd === "tab_navigate");
+    expect(nav, "pointerdown did not navigate").toBeTruthy();
+    expect(nav!.args.input).toBe("weath");
+    await unmount(bar);
   });
 });

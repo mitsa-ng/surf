@@ -457,6 +457,57 @@ impl<'a> MainPipe<'a> {
               .env
               .call_method(&webview, "clearAllBrowsingData", "()V", &[])?;
           }
+          WebviewOp::SetVisible(visible) => {
+            // VISIBLE = 0, INVISIBLE = 4.
+            self.env.call_method(
+              webview.as_obj(),
+              "setVisibility",
+              "(I)V",
+              &[if visible { 0 } else { 4 }.into()],
+            )?;
+            if visible {
+              // Later-added views stack above earlier ones; an unhide
+              // must also reorder so the target tab sits on top.
+              self.env.call_method(webview.as_obj(), "bringToFront", "()V", &[])?;
+            }
+          }
+          WebviewOp::SetBounds(x, y, width, height) => {
+            set_view_bounds(&mut self.env, webview.as_obj(), x, y, width, height)?;
+          }
+          WebviewOp::SetZoom(scale) => {
+            // WebView.setZoomBy is a hidden API (NoSuchMethodError kills
+            // the looper); apply the absolute zoom through JS instead.
+            // Documents reset on load; the host re-applies then.
+            let id = EVAL_ID_GENERATOR.next() as i32;
+            EVAL_CALLBACKS
+              .get_or_init(Default::default)
+              .lock()
+              .unwrap()
+              .insert(id, Box::new(|_| {}));
+            let js = self.env.new_string(format!(
+              "document.documentElement.style.zoom = {scale};"
+            ))?;
+            self.env.call_method(
+              webview.as_obj(),
+              "evalScript",
+              "(ILjava/lang/String;)V",
+              &[id.into(), (&js).into()],
+            )?;
+          }
+          WebviewOp::RemoveFromParent => {
+            let parent = self
+              .env
+              .call_method(webview.as_obj(), "getParent", "()Landroid/view/ViewParent;", &[])
+              .and_then(|v| v.l())?;
+            if !parent.is_null() {
+              self.env.call_method(
+                &parent,
+                "removeView",
+                "(Landroid/view/View;)V",
+                &[webview.as_obj().into()],
+              )?;
+            }
+          }
           WebviewOp::LoadHtml(html) => {
             let html = self.env.new_string(html)?;
             load_html(&mut self.env, webview.as_obj(), &html)?;
@@ -638,6 +689,44 @@ fn set_background_color<'a>(
   Ok(())
 }
 
+/// Position and size a webview view in physical pixels. The parent
+/// ContentFrameLayout generates MATCH_PARENT params on addView, so the
+/// geometry has to go through the view's own layout params: width/height
+/// plus left/top margins with gravity TOP|LEFT (51) anchor them at the
+/// requested offset.
+fn set_view_bounds<'a>(
+  env: &mut JNIEnv<'a>,
+  webview: &JObject<'a>,
+  x: i32,
+  y: i32,
+  width: i32,
+  height: i32,
+) -> JniResult<()> {
+  let params = env.call_method(
+    webview,
+    "getLayoutParams",
+    "()Landroid/view/ViewGroup$LayoutParams;",
+    &[],
+  )?;
+  let params = params.l()?;
+  if params.is_null() {
+    return Ok(());
+  }
+  env.set_field(&params, "width", "I", width.into())?;
+  env.set_field(&params, "height", "I", height.into())?;
+  // MarginLayoutParams fields; every FrameLayout params subclass has them.
+  env.set_field(&params, "leftMargin", "I", x.into())?;
+  env.set_field(&params, "topMargin", "I", y.into())?;
+  env.set_field(&params, "gravity", "I", 51.into())?;
+  env.call_method(
+    webview,
+    "setLayoutParams",
+    "(Landroid/view/ViewGroup$LayoutParams;)V",
+    &[(&params).into()],
+  )?;
+  Ok(())
+}
+
 pub(crate) enum WebViewMessage {
   CreateWebView(CreateWebViewAttributes),
   /// An operation that targets one specific webview on the activity.
@@ -666,6 +755,16 @@ pub(crate) enum WebviewOp {
   CanGoForward(Sender<bool>),
   CanGoBack(Sender<bool>),
   ClearAllBrowsingData,
+  /// Show/hide the view (setVisibility); showing also brings the view to
+  /// the front of its parent so tab switching stacks the active webview.
+  SetVisible(bool),
+  /// Position and size the view in physical pixels through its layout
+  /// params (width/height/left/top margins, gravity TOP|LEFT).
+  SetBounds(i32, i32, i32, i32),
+  /// Multiplicative page zoom (WebView.setZoomBy).
+  SetZoom(f64),
+  /// Detach the view from its parent; sent when the Rust webview drops.
+  RemoveFromParent,
 }
 
 #[derive(Clone)]

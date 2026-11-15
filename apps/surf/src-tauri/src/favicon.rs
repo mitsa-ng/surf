@@ -154,11 +154,15 @@ fn empty(status: u16) -> tauri::http::Response<Cow<'static, [u8]>> {
         .expect("static response")
 }
 
-/// Command surface: the chrome UI asks per rendered url.
+/// Command surface: the chrome UI asks per rendered url. Async with the
+/// fetch on a blocking thread: sync commands run on the main thread on
+/// macOS, and the fetch can take up to its 6s timeout.
 #[tauri::command]
-pub fn favicon_url(app: AppHandle, url: String) -> Option<String> {
+pub async fn favicon_url(app: AppHandle, url: String) -> Option<String> {
     let parsed = Url::parse(&url).ok()?;
-    lookup(&app, &parsed)
+    tauri::async_runtime::spawn_blocking(move || lookup(&app, &parsed))
+        .await
+        .ok()?
 }
 
 #[cfg(test)]

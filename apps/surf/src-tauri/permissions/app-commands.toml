@@ -51,6 +51,7 @@ commands.allow = [
     "pick_sync_file",
     "panel_set_open",
     "overlay_set_open",
+    "chrome_metrics_set",
     "agent_panel_set_open",
     "favicon_url",
     "suggest",

@@ -8,7 +8,9 @@ use surf_ext_host::permission::PermissionManager;
 use surf_ext_host::planner::InjectionPlanner;
 use surf_ext_host::router::Router;
 use surf_ext_host::Registry;
-use tauri::{AppHandle, Manager, Window, WindowBuilder, Wry};
+use tauri::{AppHandle, Manager, Window, Wry};
+#[cfg(desktop)]
+use tauri::WindowBuilder;
 use url::Url;
 
 use crate::api_impl::AlarmState;
@@ -79,6 +81,21 @@ pub struct BrowserState {
     /// Split view: two tab ids shown side by side (desktop only, not
     /// persisted; a view state, not session state).
     pub split: Mutex<Option<(TabId, TabId)>>,
+    /// Mobile: the rendered bottom bar's height in physical px, reported
+    /// by the UI (element height x devicePixelRatio). Tauri reports
+    /// logical==physical on Android (scale 1.0) while the webviews
+    /// render CSS at their own density, so the reserve must come
+    /// measured, not computed from a logical constant.
+    #[cfg(mobile)]
+    pub bottom_bar_px: std::sync::atomic::AtomicU32,
+    /// Mobile: the chrome webview's own physical viewport, measured by
+    /// the UI on resize. tao keeps reporting the pre-inset window size
+    /// (system bars and IME shrink the decor frame without a tao resize
+    /// event), so the layout must trust the webview's live numbers.
+    #[cfg(mobile)]
+    pub chrome_viewport_w_px: std::sync::atomic::AtomicU32,
+    #[cfg(mobile)]
+    pub chrome_viewport_h_px: std::sync::atomic::AtomicU32,
     /// A deep link that arrived at cold start, before the chrome UI
     /// mounted; the UI takes it once the tab model is ready.
     pub launch_deeplink: Mutex<Option<String>>,
@@ -88,7 +105,10 @@ pub struct BrowserState {
 }
 
 impl BrowserState {
-    pub fn new(db: Db, favicon_dir: std::path::PathBuf) -> Self {
+    /// `secrets_dir` backs the Android file secret store; ignored where
+    /// the platform keychain (macOS) or in-memory fallback applies.
+    pub fn new(db: Db, favicon_dir: std::path::PathBuf, secrets_dir: Option<std::path::PathBuf>) -> Self {
+        let _ = &secrets_dir;
         Self {
             panel_open: AtomicBool::new(false),
             overlay_open: AtomicBool::new(false),
@@ -105,14 +125,29 @@ impl BrowserState {
             bg_threads: Mutex::new(BgRegistry::default()),
             #[cfg(target_os = "macos")]
             secrets: std::sync::Arc::new(crate::keychain::KeychainStore::new("com.surf.browser")),
-            #[cfg(not(target_os = "macos"))]
-            secrets: std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new()),
+            #[cfg(target_os = "android")]
+            secrets: std::sync::Arc::new(crate::file_secrets::FileSecretStore::new(
+                secrets_dir.unwrap_or_else(|| std::path::PathBuf::from(".")),
+            )),
+            #[cfg(not(any(target_os = "macos", target_os = "android")))]
+            secrets: {
+                let _ = secrets_dir;
+                std::sync::Arc::new(surf_core::crypto::MemorySecretStore::new())
+            },
             nav_filter: crate::nav_filter::NavFilter::default(),
             downloads: Mutex::new(Vec::new()),
             favicons: crate::favicon::FaviconCache::new(favicon_dir),
             pending_pw: Mutex::new(None),
             recently_closed: Mutex::new(Vec::new()),
             split: Mutex::new(None),
+            #[cfg(mobile)]
+            // 220 physical px ≈ 81 CSS px at 2.625 density, the measured
+            // emulator bar; the UI corrects it right after mount.
+            bottom_bar_px: std::sync::atomic::AtomicU32::new(220),
+            #[cfg(mobile)]
+            chrome_viewport_w_px: std::sync::atomic::AtomicU32::new(0),
+            #[cfg(mobile)]
+            chrome_viewport_h_px: std::sync::atomic::AtomicU32::new(0),
             launch_deeplink: Mutex::new(None),
             #[cfg(desktop)]
             auto_sync: std::sync::Arc::new(crate::auto_sync::AutoSync::default()),
@@ -174,7 +209,12 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let win = tauri::WebviewWindowBuilder::new(app, MAIN_LABEL, tauri::WebviewUrl::App("index.html".into()))
             .title("Surf")
             .build()?;
-                restore_session(&handle);
+        restore_session(&handle);
+        // Rotation changes the window size; the content webviews must
+        // re-stack above the bottom bar.
+        if let Some(window) = app.get_window(MAIN_LABEL) {
+            watch_resize(&handle, &window);
+        }
         drop(win);
     }
 
@@ -425,26 +465,25 @@ fn restore_session(app: &AppHandle) {
     }
     #[cfg(mobile)]
     {
-        // Model entries for every saved tab; only the active one gets a
-        // webview window now, the rest are created lazily on activate.
-        let mut last: Option<surf_core::tabs::TabId> = None;
-        for tab in saved {
-            let id = crate::manager::model_open(app, tab.url.clone());
-            if let Some(title) = tab.title {
-                lock(&state.model).set_title(id, title);
+        // Same as desktop now: every restored tab gets a child webview;
+        // open_tab activates the last one and the layout pass stacks it.
+        let window = app.get_window(MAIN_LABEL).expect("main window exists");
+        if saved.is_empty() {
+            crate::manager::open_tab(app, &window, None);
+        } else {
+            for tab in saved {
+                let id = crate::manager::open_tab(app, &window, tab.url.clone());
+                if let Some(title) = tab.title {
+                    lock(&state.model).set_title(id, title);
+                }
             }
-            last = Some(id);
         }
-        if let Some(id) = last {
-            let url = lock(&state.model).get(id).and_then(|t| t.url.clone());
-            let _ = crate::manager::ensure_tab_window(app, id, url);
-        }
+        let _ = layout::relayout(app);
     }
     // open_tab leaves the last one active, matching persisted order.
     crate::manager::emit_tabs(app);
 }
 
-#[cfg(desktop)]
 fn watch_resize(app: &AppHandle, window: &Window<Wry>) {
     let handle = app.clone();
     let win = window.clone();

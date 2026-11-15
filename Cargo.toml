@@ -9,15 +9,22 @@ members = [
 # Local fork of wry 0.57.2: routes Android per-webview operations
 # (eval/load/url/...) through a per-webview map instead of the single
 # last-created slot, so multiple webviews on one activity each receive
-# their own IPC responses and events. Drop when upstream wry fixes it.
+# their own IPC responses and events. Also implements set_visible/
+# set_bounds (setVisibility + layout params) for Android, and detaches a
+# webview's view on drop. Drop when upstream wry fixes it.
 #
 # Local fork of tauri-runtime-wry 2.12.3: the webview-message dispatch
 # silently dropped messages whose (window_id, webview_id) lookup missed,
 # which killed the Android main window's eval/emit path. Our fork logs
 # the exact mismatch (and pins whatever fix the logs justify). Drop when
 # upstream handles the miss explicitly.
+#
+# Local fork of tauri 2.12.5: the Webview setters block
+# (show/hide/close/set_bounds/...) is desktop-gated upstream; mobile
+# multiwebview tab switching needs it. Drop when upstream un-gates it.
 [patch.crates-io]
 wry = { path = "vendor/wry" }
+tauri = { path = "vendor/tauri" }
 tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
 
 [workspace.package]

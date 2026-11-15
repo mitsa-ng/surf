@@ -84,7 +84,7 @@
     /* Chrome floats the find bar under the omnibox, clear of the page. */
     top: 91px;
     right: 12px;
-    z-index: 5;
+    z-index: 32;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -93,6 +93,17 @@
     background: var(--toolbar-surface);
     border-radius: 10px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  }
+  /* Mobile: the bar floats just above the bottom chrome. */
+  :global(.mobile) .find-bar {
+    top: auto;
+    right: 8px;
+    left: 8px;
+    bottom: calc(92px + env(safe-area-inset-bottom));
+  }
+  :global(.mobile) .find-bar input {
+    flex: 1;
+    width: auto;
   }
   input {
     width: 200px;

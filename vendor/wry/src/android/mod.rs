@@ -82,6 +82,30 @@ define_static_handlers! {
 
 static PACKAGE: OnceLock<String> = OnceLock::new();
 
+// SURF PATCH: process-global subresource blocker consulted by
+// shouldInterceptRequest before per-webview custom-protocol handling.
+// Unlike the handlers above it is not keyed by webview: the embedder's
+// rule set is global, so one predicate covers every content webview.
+type RequestBlocker = Box<dyn Fn(&str) -> bool + Send + Sync>;
+static REQUEST_BLOCKER: LazyLock<Mutex<Option<RequestBlocker>>> =
+  LazyLock::new(|| Mutex::new(None));
+
+/// Install (or with `None`, clear) the global request blocker. Called
+/// once per intercepted request, off the main thread; it must be fast
+/// and must fail open (return `false`) on internal error.
+pub fn set_request_blocker(blocker: Option<RequestBlocker>) {
+  *REQUEST_BLOCKER.lock().unwrap() = blocker;
+}
+
+pub fn request_blocked(url: &str) -> bool {
+  REQUEST_BLOCKER
+    .lock()
+    .unwrap()
+    .as_ref()
+    .map(|f| f(url))
+    .unwrap_or(false)
+}
+
 type EvalCallback = Box<dyn Fn(String) + Send + 'static>;
 
 static EVAL_ID_GENERATOR: Counter = Counter::new();
@@ -329,7 +353,6 @@ impl InnerWebView {
       .lock()
       .unwrap()
       .insert(activity_id, attributes.clone());
-
     MainPipe::send(activity_id, WebViewMessage::CreateWebView(attributes));
 
     Ok(Self { id, activity_id })
@@ -377,7 +400,8 @@ impl InnerWebView {
     false
   }
 
-  pub fn zoom(&self, _scale_factor: f64) -> Result<()> {
+  pub fn zoom(&self, scale_factor: f64) -> Result<()> {
+    self.op(WebviewOp::SetZoom(scale_factor));
     Ok(())
   }
 
@@ -457,13 +481,28 @@ impl InnerWebView {
     Ok(crate::Rect::default())
   }
 
-  pub fn set_bounds(&self, _bounds: crate::Rect) -> Result<()> {
-    // Unsupported
+  pub fn set_bounds(&self, bounds: crate::Rect) -> Result<()> {
+    // Android views are in physical pixels; the tauri layer converts
+    // logical geometry to physical before dispatching.
+    let position = match bounds.position {
+      dpi::Position::Physical(p) => (p.x as f64, p.y as f64),
+      dpi::Position::Logical(p) => (p.x, p.y),
+    };
+    let size = match bounds.size {
+      dpi::Size::Physical(s) => (s.width as f64, s.height as f64),
+      dpi::Size::Logical(s) => (s.width, s.height),
+    };
+    self.op(WebviewOp::SetBounds(
+      position.0 as i32,
+      position.1 as i32,
+      size.0 as i32,
+      size.1 as i32,
+    ));
     Ok(())
   }
 
-  pub fn set_visible(&self, _visible: bool) -> Result<()> {
-    // Unsupported
+  pub fn set_visible(&self, visible: bool) -> Result<()> {
+    self.op(WebviewOp::SetVisible(visible));
     Ok(())
   }
 
@@ -475,6 +514,14 @@ impl InnerWebView {
   pub fn focus_parent(&self) -> Result<()> {
     // Unsupported
     Ok(())
+  }
+}
+
+impl Drop for InnerWebView {
+  fn drop(&mut self) {
+    // Detach the Kotlin view so a closed webview does not linger as an
+    // invisible layer stacked on the activity.
+    self.op(WebviewOp::RemoveFromParent);
   }
 }
 

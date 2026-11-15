@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ui, refreshBookmarks } from "../ui.svelte";
   import { tabs, closeTab, openTab, setPinned, applySnapshot } from "../tabs.svelte";
+  import { isInternalCommand, runInternalCommand } from "../internal";
   import { splitClear, splitSet, tabNavigate, tabReload, tabCloseOthers, tabCloseRight, tabSetMuted } from "../ipc";
 
   const menu = $derived(ui.tabMenu);
@@ -84,7 +85,14 @@
     if (!target) return;
     try {
       const text = (await navigator.clipboard.readText()).trim();
-      if (text) applySnapshot(await tabNavigate(target.id, text));
+      if (!text) return;
+      // Same guard as the omnibox: surf:// text is a browser command,
+      // and nothing serves that scheme to a webview.
+      if (isInternalCommand(text)) {
+        runInternalCommand(text);
+        return;
+      }
+      applySnapshot(await tabNavigate(target.id, text));
     } catch (e) {
       console.error(String(e));
     }
