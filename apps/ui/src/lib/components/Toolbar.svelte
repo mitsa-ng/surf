@@ -10,14 +10,22 @@
   let focused = $state(false);
   let highlight = $state(-1);
   let inputEl: HTMLInputElement | undefined = $state();
+  // When the field gained focus; a click that lands right after focus is
+  // the same gesture, so its caret placement loses to select-all.
+  let focusAt = 0;
   let live = $state<string[]>([]);
   let suggestTimer: ReturnType<typeof setTimeout> | undefined;
   const privateMode = $derived(activeTab()?.incognito ?? false);
   const loading = $derived(activeTab()?.loading ?? false);
 
   // Refill from the model whenever the address changes and we are not editing.
+  // A filter-rejected navigation surfaces here for a beat: the omnibox is
+  // the one chrome element that provably renders on every platform, so the
+  // blocked host is named where the user typed it.
   $effect(() => {
-    const shown = displayAddress(activeTab()?.url ?? null);
+    const shown = ui.blockedHost
+      ? `已封鎖 ${ui.blockedHost}`
+      : displayAddress(activeTab()?.url ?? null);
     if (!focused) input = shown;
   });
 
@@ -160,9 +168,18 @@
       aria-controls="address-suggestions"
       onfocus={() => {
         focused = true;
+        focusAt = performance.now();
         inputEl?.select();
       }}
       onblur={() => (focused = false)}
+      onmouseup={() => {
+        // Chrome's omnibox contract: a cold click selects all, and the
+        // click's caret placement must not override that selection; a
+        // second click (already focused) keeps caret placement. The
+        // deferred select runs after mouseup's own caret-placement
+        // default action, which would otherwise win.
+        if (performance.now() - focusAt < 300) setTimeout(() => inputEl?.select(), 0);
+      }}
       oninput={() => (highlight = -1)}
       onkeydown={(e) => {
         if (e.key === "ArrowDown" && suggestions.length > 0) {

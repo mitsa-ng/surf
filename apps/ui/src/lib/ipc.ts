@@ -21,6 +21,9 @@ export interface TabsSnapshot {
   tabs: TabState[];
   active: number | null;
   split?: [number, number] | null;
+  /** Present while a filter-rejected nav is pending for a tab; `seq`
+      bumps per fresh rejection so the UI can dedup follow-ups. */
+  blocked?: { tab: number; url: string; seq: number } | null;
 }
 
 export interface FilterCapabilities {
@@ -146,6 +149,12 @@ export const historyClear = () => invoke<number>("history_clear");
 export const bookmarksBarSetOpen = (open: boolean) => invoke<void>("bookmarks_bar_set_open", { open });
 
 export const settingsGet = (key: string) => invoke<string | null>("settings_get", { key });
+
+export type AppIconChoice = "auto" | "light" | "blue" | "dark";
+
+export const appIconGet = () => invoke<{ choice: AppIconChoice }>("app_icon_get");
+
+export const appIconSet = (choice: AppIconChoice) => invoke<void>("app_icon_set", { choice });
 
 export type DownloadRow = { url: string; path: string; filename: string; success: boolean; at: number };
 

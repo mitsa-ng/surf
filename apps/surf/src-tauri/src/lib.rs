@@ -1,5 +1,7 @@
 mod agent;
+mod agui;
 mod api_impl;
+mod app_icon;
 #[cfg(desktop)]
 mod auto_sync;
 mod bg;
@@ -110,7 +112,6 @@ pub fn run() {
             layout::panel_set_open,
             layout::overlay_set_open,
             layout::chrome_metrics_set,
-            agent::agent_panel_set_open,
             layout::bookmarks_bar_set_open,
             layout::split_set,
             layout::split_clear,
@@ -120,7 +121,14 @@ pub fn run() {
             commands::find_in_page,
             commands::suggest,
             favicon::favicon_url,
-            agent::agent_action,
+            agui::agent_chat_set_open,
+            agui::agent_chat_send,
+            agui::agent_chat_history,
+            agui::agent_chat_reset,
+            agui::agent_agui_config_get,
+            agui::agent_agui_config_set,
+            app_icon::app_icon_get,
+            app_icon::app_icon_set,
             agent::agent_llm_config_get,
             agent::agent_llm_config_set,
             commands::password_save,
@@ -130,4 +138,71 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("tauri failed to start");
+}
+
+#[cfg(test)]
+mod tests {
+    /// The AG-UI round's silent-failure bug: commands registered in
+    /// `generate_handler!` but missing from every permission manifest
+    /// are denied at the ACL with no visible error — the chrome
+    /// invokes, the invoke dies, nothing logs. This test fails the
+    /// build the moment a new command forgets its allow entry.
+    #[test]
+    fn every_registered_command_is_allowed_by_some_permission() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let lib_rs = std::fs::read_to_string(format!("{}/src/lib.rs", manifest_dir)).expect("read lib.rs");
+
+        // Collect `module::command` identifiers inside the
+        // generate_handler![ ... ] block.
+        let start = lib_rs
+            .find("generate_handler![")
+            .map(|i| lib_rs[i..].find('[').map(|j| i + j + 1).unwrap_or(i))
+            .expect("generate_handler! block");
+        let end = lib_rs[start..].find(']').map(|i| start + i).expect("handler block closes");
+        let handler_block = &lib_rs[start..end];
+        let registered: Vec<String> = handler_block
+            .lines()
+            .filter_map(|l| l.split("//").next())
+            .filter_map(|l| l.trim().strip_suffix(','))
+            .filter(|l| l.contains("::"))
+            .map(|l| l.rsplit("::").next().unwrap_or(l).trim().to_owned())
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(!registered.is_empty(), "no commands parsed from generate_handler!");
+
+        // Collect every quoted token inside commands.allow = [ ... ]
+        // lists across the permission manifests.
+        let perms_dir = format!("{}/permissions", manifest_dir);
+        let mut allowed: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&perms_dir).expect("permissions dir") {
+            let toml = std::fs::read_to_string(entry.expect("dir entry").path()).expect("read toml");
+            let mut in_allow = false;
+            for line in toml.lines() {
+                if line.contains("commands.allow") {
+                    in_allow = true;
+                }
+                if in_allow {
+                    allowed.extend(
+                        line.split('"')
+                            .skip(1)
+                            .step_by(2)
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>(),
+                    );
+                    if line.contains(']') {
+                        in_allow = false;
+                    }
+                }
+            }
+        }
+        assert!(!allowed.is_empty(), "no commands.allow parsed from permissions/");
+
+        let missing: Vec<&String> = registered.iter().filter(|c| !allowed.contains(c)).collect();
+        assert!(
+            missing.is_empty(),
+            "commands registered in generate_handler! but allowed by no permissions/*.toml \
+             (the ACL denies them silently): {missing:?}\nfix: add them to \
+             permissions/app-commands.toml"
+        );
+    }
 }

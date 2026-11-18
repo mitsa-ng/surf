@@ -14,7 +14,8 @@ fn snapshot(app: &AppHandle) -> TabsSnapshot {
     let state = app.state::<BrowserState>();
     let model = state::lock(&state.model);
     let split = *state::lock(&state.split);
-    TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id(), split }
+    let blocked = state::lock(&state.blocked_nav).clone();
+    TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id(), split, blocked }
 }
 
 #[tauri::command]

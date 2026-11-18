@@ -1,8 +1,9 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { isMobileDevice } from "../platform";
-  import { pickSyncFile, rulesGet, rulesSet, syncAutoGet, syncAutoSet, syncExport, syncImport } from "../ipc";
-  import { agentLlmConfigGet, agentLlmConfigSet } from "../agent.svelte";
+  import { appIconGet, appIconSet, pickSyncFile, rulesGet, rulesSet, syncAutoGet, syncAutoSet, syncExport, syncImport, type AppIconChoice } from "../ipc";
+  import { agentAguiConfigGet, agentAguiConfigSet, agentLlmConfigGet, agentLlmConfigSet } from "../agent.svelte";
+  import AppIconSwatch from "./AppIconSwatch.svelte";
   import { refreshPasswords, deletePassword, ui as uiState } from "../ui.svelte";
 
   const engines = ["duckduckgo", "google", "bing", "custom"] as const;
@@ -29,6 +30,30 @@
   let llmKey = $state("");
   let llmHasKey = $state(false);
   let llmNotice = $state("");
+  let aguiEndpoint = $state("");
+  let aguiKey = $state("");
+  let aguiHasKey = $state(false);
+  let aguiNotice = $state("");
+  let iconChoice = $state<AppIconChoice>("auto");
+  let iconNotice = $state("");
+
+  function loadIcon() {
+    void appIconGet()
+      .then((cfg) => (iconChoice = cfg.choice))
+      .catch(() => {});
+  }
+  loadIcon();
+
+  async function saveIcon(choice: AppIconChoice) {
+    iconChoice = choice;
+    iconNotice = "";
+    try {
+      await appIconSet(choice);
+      iconNotice = choice === "auto" ? "已設為自動（跟隨系統 light/dark）" : "已套用";
+    } catch (e) {
+      iconNotice = String(e);
+    }
+  }
 
   async function doExport() {
     try {
@@ -177,6 +202,32 @@
     }
   }
 
+  function loadAgui() {
+    void agentAguiConfigGet()
+      .then((cfg) => {
+        aguiEndpoint = cfg.endpoint;
+        aguiHasKey = cfg.hasKey;
+      })
+      .catch(() => {});
+  }
+  loadAgui();
+
+  async function saveAgui(clearKey = false) {
+    aguiNotice = "";
+    try {
+      await agentAguiConfigSet(aguiEndpoint, clearKey ? null : aguiKey || null, clearKey);
+      aguiKey = "";
+      const cfg = await agentAguiConfigGet();
+      aguiEndpoint = cfg.endpoint;
+      aguiHasKey = cfg.hasKey;
+      aguiNotice = cfg.endpoint
+        ? "已儲存：Agent 面板會改用 AG-UI endpoint 回應"
+        : "已清空 endpoint；Agent 面板回到 LLM／示範模式";
+    } catch (e) {
+      aguiNotice = String(e);
+    }
+  }
+
   async function saveBlocklist() {
     const filters = blocklist
       .split("\n")
@@ -237,6 +288,60 @@
   {:else if engineNotice}
     <p class="notice" role="status" aria-live="polite">{engineNotice}</p>
   {/if}
+  <h3>App icon</h3>
+  <div class="row icon-options" role="group" aria-label="App icon">
+    <button type="button" class:selected={iconChoice === "auto"} aria-pressed={iconChoice === "auto"} onclick={() => void saveIcon("auto")}>
+      <span class="pair">
+        <AppIconSwatch variant="light" size={28} />
+        <AppIconSwatch variant="dark" size={28} />
+      </span>
+      <span>自動</span>
+    </button>
+    <button type="button" class:selected={iconChoice === "light"} aria-pressed={iconChoice === "light"} onclick={() => void saveIcon("light")}>
+      <AppIconSwatch variant="light" size={44} />
+      <span>暖灰</span>
+    </button>
+    <button type="button" class:selected={iconChoice === "blue"} aria-pressed={iconChoice === "blue"} onclick={() => void saveIcon("blue")}>
+      <AppIconSwatch variant="blue" size={44} />
+      <span>海藍</span>
+    </button>
+    <button type="button" class:selected={iconChoice === "dark"} aria-pressed={iconChoice === "dark"} onclick={() => void saveIcon("dark")}>
+      <AppIconSwatch variant="dark" size={44} />
+      <span>近黑</span>
+    </button>
+  </div>
+  {#if iconNotice}<p class="notice" role="status" aria-live="polite">{iconNotice}</p>{/if}
+  <p class="notice">自動＝跟隨系統 light/dark（暖灰／近黑）；選定後立即套用到 Dock。</p>
+
+  <h3>Agent（AG-UI endpoint）</h3>
+  <div class="row">
+    <input
+      class="sync-path"
+      bind:value={aguiEndpoint}
+      type="text"
+      placeholder="http://127.0.0.1:8000/run"
+      aria-label="AG-UI endpoint URL"
+      spellcheck="false"
+    />
+  </div>
+  <div class="row">
+    <input
+      class="sync-path"
+      bind:value={aguiKey}
+      type="password"
+      placeholder={aguiHasKey ? "金鑰已儲存（留空保留）" : "API 金鑰（選填，本地 endpoint 通常免）"}
+      aria-label="AG-UI API 金鑰"
+      spellcheck="false"
+      autocomplete="off"
+    />
+    <button class="primary" onclick={() => void saveAgui()}>儲存</button>
+    {#if aguiHasKey}
+      <button onclick={() => void saveAgui(true)}>清除金鑰</button>
+    {/if}
+  </div>
+  {#if aguiNotice}<p class="notice" role="status" aria-live="polite">{aguiNotice}</p>{/if}
+  <p class="notice">設定後 Agent 面板以 AG-UI 協議連線（LangGraph、CrewAI、Mastra 等相容 endpoint）；優先於 LLM。</p>
+
   <h3>Agent（OpenAI 相容 LLM）</h3>
   <div class="row">
     <input
@@ -450,5 +555,36 @@
   .engine-options button.selected {
     background: var(--accent);
     color: #fff;
+  }
+  .icon-options {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .icon-options button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .icon-options button:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .icon-options button.selected {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .icon-options .pair {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    height: 44px;
   }
 </style>

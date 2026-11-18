@@ -3,8 +3,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { init, openTab, openIncognito, reopenClosed, closeTab, activateTab, tabs, navigateActive, historyAction } from "./lib/tabs.svelte";
-  import { initUi, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
-  import { deeplinkTake, overlaySetOpen, panelSetOpen, tabZoom } from "./lib/ipc";
+  import { initUi, showBlockedNav, toggleBookmarksBar, toggleFind, togglePanel, toggleTabSearch, ui } from "./lib/ui.svelte";
+  import { deeplinkTake, overlaySetOpen, panelSetOpen, tabZoom, type TabsSnapshot as IpcTabsSnapshot } from "./lib/ipc";
   import { runInternalCommand } from "./lib/internal";
   import { isMobileDevice } from "./lib/platform";
   import TabStrip from "./lib/components/TabStrip.svelte";
@@ -22,7 +22,6 @@
   const isMobile = isMobileDevice();
   let toolbar: Toolbar | undefined = $state();
   const activeUrl = $derived(tabs.list.find((t) => t.id === tabs.activeId)?.url ?? null);
-
   $effect(() => {
     if (isMobile) return;
     const open = ui.panel !== null;
@@ -37,7 +36,12 @@
   $effect(() => {
     if (isMobile) return;
     const overlay =
-      ui.tabMenu !== null || ui.tabSearchOpen || ui.suggestOpen || ui.findOpen || ui.help !== null || ui.pwPrompt !== null;
+      ui.tabMenu !== null ||
+      ui.tabSearchOpen ||
+      ui.suggestOpen ||
+      ui.findOpen ||
+      ui.help !== null ||
+      ui.pwPrompt !== null;
     document.body.classList.toggle("chrome-expanded", ui.panel !== null || overlay);
     void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
   });
@@ -56,7 +60,9 @@
       ui.findOpen ||
       ui.help !== null ||
       ui.mobileMenu ||
-      ui.omniOpen;
+      ui.omniOpen ||
+      // Same overlay contract for the blocked-navigation toast.
+      ui.blockedHost !== null;
     void overlaySetOpen(overlay).catch((error) => console.error(String(error)));
   });
 
@@ -85,6 +91,27 @@
       };
       setTimeout(() => void reportChrome(), 50);
       window.addEventListener("resize", () => void reportChrome());
+      // Android back contract: MainActivity asks the chrome webview first;
+      // closing one overlay consumes the press. Anything left is the page
+      // history's turn, which Kotlin drives on the visible content webview.
+      (window as unknown as { __surfHandleBack?: () => boolean }).__surfHandleBack = () => {
+        if (tabs.sheetOpen) {
+          tabs.sheetOpen = false;
+        } else if (ui.mobileMenu) {
+          ui.mobileMenu = false;
+        } else if (ui.panel !== null) {
+          ui.panel = null;
+        } else if (ui.findOpen) {
+          ui.findOpen = false;
+        } else if (ui.help !== null) {
+          ui.help = null;
+        } else if (ui.omniOpen) {
+          (document.activeElement as HTMLElement | null)?.blur();
+        } else {
+          return false;
+        }
+        return true;
+      };
     }
     const onNavigate = (e: Event) => {
       const url = (e as CustomEvent<string>).detail;
@@ -150,6 +177,14 @@
         }
       }),
       listen<string>("deeplink://open", (e) => runInternalCommand(e.payload)),
+      // The blocked notice rides the tabs snapshot, one-shot Rust side.
+      // Fired imperatively here: the same signal through a template {#if}
+      // stayed invisible in the real macOS chrome webview, while this
+      // DOM path rendered on both platforms.
+      listen<IpcTabsSnapshot>("tabs://changed", (e) => {
+        const blocked = e.payload.blocked;
+        if (blocked && blocked.tab === tabs.activeId) showBlockedNav(blocked.url, blocked.seq);
+      }),
     ];
     // A deep link that arrived before this UI mounted (CLI launch with a
     // URL) is queued Rust-side; take it once the tab model exists.
@@ -169,6 +204,16 @@
   });
 
   function onKeydown(e: KeyboardEvent) {
+    // Esc closes the find bar from anywhere (Chrome parity); its own
+    // input handler only sees Esc while focused, which left the bar
+    // stranded open when focus had moved on.
+    if (e.key === "Escape") {
+      if (ui.findOpen) {
+        e.preventDefault();
+        ui.findOpen = false;
+      }
+      return;
+    }
     const meta = e.metaKey || e.ctrlKey;
     if (!meta) return;
     if (e.key === "l") {
@@ -248,7 +293,6 @@
   <!-- Content webviews are native children positioned below this chrome;
        nothing renders here. -->
 {/if}
-
 <style>
   header {
     position: fixed;

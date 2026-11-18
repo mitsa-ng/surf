@@ -1,5 +1,6 @@
 import * as ipc from "./ipc";
 import { tabs } from "./tabs.svelte";
+import { isMobileDevice } from "./platform";
 
 export const ui = $state<{
   panel: null | "bookmarks" | "history" | "extensions" | "settings" | "downloads" | "agent";
@@ -39,6 +40,9 @@ export const ui = $state<{
       webview must sit above the content views or the dropdown is
       untappable). */
   omniOpen: boolean;
+  /** Host of a navigation the filter just blocked; the chrome toasts it
+      briefly so a filtered URL never reads as a dead browser. */
+  blockedHost: string | null;
 }>({
   panel: null,
   extensions: [],
@@ -62,6 +66,7 @@ export const ui = $state<{
   passwords: [],
   mobileMenu: false,
   omniOpen: false,
+  blockedHost: null,
 });
 
 const ENGINE_LABELS: Record<string, string> = {
@@ -185,6 +190,46 @@ export function toggleTabSearch() {
 /** Cmd/Ctrl+F: find-in-page bar. */
 export function toggleFind() {
   ui.findOpen = !ui.findOpen;
+}
+
+// Blocked-navigation notice: the filter rejects a top-level navigation and
+// the page would otherwise just sit there, so the chrome names the host for
+// a few seconds and the toast leaves on its own. The node is driven
+// imperatively: a Svelte {#if} on the same state stayed invisible in the
+// real macOS chrome webview (event arrived, state set, DOM never updated),
+// while this direct path renders on both platforms. ui.blockedHost mirrors
+// the state for the mobile overlay lift.
+let blockedTimer: ReturnType<typeof setTimeout> | undefined;
+let blockedEl: HTMLDivElement | undefined;
+let lastBlockedSeq = -1;
+
+export function showBlockedNav(url: string, seq: number) {
+  // Follow-up snapshots re-serve the same pending block until a
+  // navigation commits; only a fresh rejection (new seq) re-toasts.
+  if (seq === lastBlockedSeq) return;
+  lastBlockedSeq = seq;
+  let host = url;
+  try {
+    host = new URL(url).host || url;
+  } catch {
+    // not a parseable URL: show the raw text
+  }
+  ui.blockedHost = host;
+  const mobile = isMobileDevice();
+  if (!blockedEl) {
+    blockedEl = document.createElement("div");
+    blockedEl.className = "blocked-toast";
+    blockedEl.setAttribute("role", "status");
+    document.body.appendChild(blockedEl);
+  }
+  blockedEl.textContent = `已封鎖 ${host}`;
+  blockedEl.classList.toggle("mobile", mobile);
+  blockedEl.style.display = "";
+  clearTimeout(blockedTimer);
+  blockedTimer = setTimeout(() => {
+    if (blockedEl) blockedEl.style.display = "none";
+    ui.blockedHost = null;
+  }, 2800);
 }
 
 export async function proposeInstall() {

@@ -14,6 +14,7 @@ const invokeMockImpl = async (cmd: string, _args?: object) => {
     case "history_search":
     case "extensions_list":
     case "downloads_list":
+    case "agent_chat_history":
       return [];
     default:
       return null;
@@ -31,6 +32,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import App from "../App.svelte";
 import BottomBar from "../lib/components/BottomBar.svelte";
+import Toolbar from "../lib/components/Toolbar.svelte";
 import Favicon from "../lib/components/Favicon.svelte";
 import TabMenu from "../lib/components/TabMenu.svelte";
 import { applySnapshot } from "../lib/tabs.svelte";
@@ -241,8 +243,122 @@ describe("tab menu", () => {
   });
 });
 
+describe("interaction fluency fixes", () => {
+  beforeEach(() => {
+    invokeMock.mockImplementation(invokeMockImpl);
+    document.body.innerHTML = "";
+    ui.panel = null;
+    ui.findOpen = false;
+  });
+
+  it("Escape closes the find bar even when its input is not focused", async () => {
+    const { app } = await renderApp();
+    ui.findOpen = true;
+    await new Promise((r) => setTimeout(r, 10));
+    // Focus is on the body: the find input's own Esc handler cannot
+    // see this keypress; the window-level handler must.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(ui.findOpen, "global Esc closed the find bar").toBe(false);
+    await unmount(app);
+    document.body.innerHTML = "";
+  });
+
+  it("mobile omnibox selects its text on focus so typing replaces it", async () => {
+    seedTabs([{ id: 3, url: "https://example.org/x", title: "X", loading: false }]);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const bar = mount(BottomBar, { target });
+    await new Promise((r) => setTimeout(r, 20));
+    const input = target.querySelector<HTMLInputElement>("input.address")!;
+    // The model refill ran unfocused; focusing must select the shown
+    // URL (Chrome parity, same as the desktop toolbar's onfocus).
+    input.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+    expect(input.selectionEnd, "the whole address is selected").toBeGreaterThan(0);
+    await unmount(bar);
+    document.body.innerHTML = "";
+  });
+
+  it("desktop omnibox keeps select-all across the click gesture", async () => {
+    seedTabs([{ id: 7, url: "https://example.org/y", title: "Y", loading: false }]);
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const tl = mount(Toolbar, { target });
+    await new Promise((r) => setTimeout(r, 20));
+    const input = target.querySelector<HTMLInputElement>("input.address")!;
+    // Chrome parity: one cold click selects all even though the
+    // mouseup caret placement lands after the focus-time select().
+    input.focus();
+    input.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd, "the whole address is selected").toBe(input.value.length);
+    await unmount(tl);
+    document.body.innerHTML = "";
+  });
+
+  it("names a blocked navigation in a toast, active tab only", async () => {
+    const { app } = await renderApp();
+    // Seed after mount: init() applies the (empty) boot snapshot over
+    // anything seeded earlier. The block rides the tabs://changed
+    // snapshot (one-shot Rust side); a background tab's block must not
+    // surface.
+    seedTabs([{ id: 5, url: "https://start.example/", title: "S", loading: false }]);
+    const handler = listenMock.mock.calls.find(([event]) => event === "tabs://changed")![1] as (
+      e: { payload: TabsSnapshot },
+    ) => void;
+    const snap = (blocked: TabsSnapshot["blocked"]): TabsSnapshot => ({
+      tabs: [{ id: 5, url: "https://start.example/", title: "S", loading: false }],
+      active: 5,
+      split: null,
+      blocked,
+    });
+    handler({ payload: snap({ tab: 9, url: "https://blocked.example/", seq: 0 }) });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.querySelector(".blocked-toast"), "another tab's block stays quiet").toBeNull();
+    handler({ payload: snap({ tab: 5, url: "https://blocked.example/page", seq: 1 }) });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.querySelector(".blocked-toast")?.textContent).toContain("blocked.example");
+    await unmount(app);
+    document.body.innerHTML = "";
+  });
+
+  it("Android back closes one overlay at a time, then yields to page history", async () => {
+    // jsdom keeps userAgent on the prototype: save the value, not the
+    // descriptor, or the stub leaks into every later test in this file.
+    const prevUA = navigator.userAgent;
+    Object.defineProperty(navigator, "userAgent", { value: "Android 16", configurable: true });
+    try {
+      const { app } = await renderApp();
+      const back = (window as unknown as { __surfHandleBack?: () => boolean }).__surfHandleBack;
+      expect(back, "App exposes the Android back hook").toBeTypeOf("function");
+      // Nothing open: the visible content webview's history is next
+      // (Kotlin drives WebView.goBack; the hook only owns overlays).
+      expect(back!()).toBe(false);
+      ui.panel = "settings";
+      expect(back!(), "panel open is consumed by the hook").toBe(true);
+      expect(ui.panel).toBeNull();
+      expect(back!()).toBe(false);
+      await unmount(app);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", { value: prevUA, configurable: true });
+    }
+    document.body.innerHTML = "";
+  });
+});
+
 describe("agent panel", () => {
-  it("renders the a2ui host with a connecting state before the stream lands", async () => {
+  beforeEach(() => {
+    invokeMock.mockImplementation(invokeMockImpl);
+    listenMock.mockClear();
+    document.body.innerHTML = "";
+    ui.panel = null;
+  });
+
+  it("renders the chat panel with a greeting and a composer", async () => {
     const { app, target } = await renderApp();
     const actions = target.querySelector(".actions")!;
     const agentBtn = Array.from(actions.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
@@ -253,18 +369,136 @@ describe("agent panel", () => {
     await new Promise((r) => setTimeout(r, 80));
     const drawer = target.querySelector(".drawer");
     expect(drawer, "panel drawer missing").toBeTruthy();
-    // The real a2ui packages load lazily; in jsdom the custom element
-    // definition may trail the first paint, so assert the host either way.
-    const host = drawer!.querySelector(".a2ui-host");
-    expect(host, "a2ui host missing").toBeTruthy();
+    expect(drawer!.querySelector(".agent-panel"), "chat panel missing").toBeTruthy();
+    expect(drawer!.querySelector(".greet"), "greeting missing in an empty thread").toBeTruthy();
+    const input = drawer!.querySelector<HTMLInputElement>("input[aria-label='傳訊息給 agent']");
+    expect(input, "composer input missing").toBeTruthy();
     await unmount(app);
   });
 
-  it("registers <a2ui-surface> once the runtime loads", async () => {
-    // The panel mounts the runtime lazily; loading the packages has the
-    // same side effect here (custom element registration).
-    await import("@a2ui/lit/v0_9");
-    expect(typeof customElements.get("a2ui-surface"), "a2ui-surface registered").toBe("function");
+  it("shows the local demo source label when nothing is configured", async () => {
+    const { app, target } = await renderApp();
+    const actions = target.querySelector(".actions")!;
+    const agentBtn = Array.from(actions.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.getAttribute("aria-label") ?? "").includes("Agent"),
+    )!;
+    agentBtn.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const drawer = target.querySelector(".drawer")!;
+    const label = drawer.querySelector(".source");
+    // Both config commands return null under the default mock; the
+    // source precedence falls through to the local demo.
+    expect(label?.textContent, "demo source label missing").toContain("本地示範模式");
+    await unmount(app);
+  });
+
+  it("locks the send button while a run is active and releases it after", async () => {
+    const { app, target } = await renderApp();
+    const actions = target.querySelector(".actions")!;
+    const agentBtn = Array.from(actions.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.getAttribute("aria-label") ?? "").includes("Agent"),
+    )!;
+    agentBtn.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const drawer = target.querySelector(".drawer")!;
+    const input = drawer.querySelector<HTMLInputElement>("input[aria-label='傳訊息給 agent']")!;
+    // The panel registered its agui://event listener; drive the same
+    // wire the Rust run loop emits on.
+    const registration = listenMock.mock.calls.find(([ev]) => ev === "agui://event");
+    expect(registration, "agui://event listener missing").toBeTruthy();
+    const handler = registration![1] as (event: { payload: unknown }) => void;
+
+    input.value = "hello";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    const send = drawer.querySelector<HTMLButtonElement>(".composer button[type='submit']")!;
+    expect(send.disabled, "send enabled with text and no run").toBe(false);
+
+    handler({ payload: { type: "RUN_STARTED" } });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(send.disabled, "run-active locks send even with text").toBe(true);
+
+    handler({ payload: { type: "RUN_ERROR", message: "x" } });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(send.disabled, "run end releases send").toBe(false);
+    await unmount(app);
+  });
+
+  it("sends the typed text through agent_chat_send on Enter", async () => {
+    const calls: Array<[string, object?]> = [];
+    invokeMock.mockImplementation((async (cmd: string, args?: object) => {
+      calls.push([cmd, args]);
+      if (cmd === "get_tabs") return { tabs: [], active: null };
+      // A null bookmarks_list poisons ui.bookmarks for every later
+      // test (the paste-and-go comment warns about exactly this).
+      if (cmd === "bookmarks_list") return [];
+      if (cmd === "agent_chat_history") return [];
+      return null;
+    }) as typeof invokeMockImpl);
+    const { app, target } = await renderApp();
+    const actions = target.querySelector(".actions")!;
+    const agentBtn = Array.from(actions.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.getAttribute("aria-label") ?? "").includes("Agent"),
+    )!;
+    agentBtn.click();
+    await new Promise((r) => setTimeout(r, 80));
+    const drawer = target.querySelector(".drawer")!;
+    const input = drawer.querySelector<HTMLInputElement>("input[aria-label='傳訊息給 agent']")!;
+    input.value = "現在幾個分頁？";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    const sent = calls.find(([cmd]) => cmd === "agent_chat_send");
+    expect(sent, "agent_chat_send not invoked").toBeTruthy();
+    expect(sent![1], "send payload carries the typed text").toEqual({ text: "現在幾個分頁？" });
+    invokeMock.mockImplementation(invokeMockImpl);
+    await unmount(app);
+    document.body.innerHTML = "";
+  });
+});
+
+describe("settings app icon", () => {
+  beforeEach(() => {
+    invokeMock.mockImplementation(invokeMockImpl);
+    document.body.innerHTML = "";
+    ui.panel = null;
+  });
+
+  it("shows the four icon options with auto selected by default", async () => {
+    const { app, target } = await renderApp();
+    ui.panel = "settings";
+    await new Promise((r) => setTimeout(r, 60));
+    const buttons = target.querySelectorAll<HTMLButtonElement>(".icon-options button");
+    expect(buttons.length, "four icon options").toBe(4);
+    expect(buttons[0]!.classList.contains("selected"), "auto is the default").toBe(true);
+    expect(buttons[0]!.textContent).toContain("自動");
+    await unmount(app);
+  });
+
+  it("saves the picked variant through app_icon_set", async () => {
+    const calls: Array<[string, object?]> = [];
+    invokeMock.mockImplementation((async (cmd: string, args?: object) => {
+      calls.push([cmd, args]);
+      if (cmd === "get_tabs") return { tabs: [], active: null };
+      if (cmd === "bookmarks_list" || cmd === "history_recent") return [];
+      if (cmd === "app_icon_get") return { choice: "auto" };
+      return null;
+    }) as typeof invokeMockImpl);
+    const { app, target } = await renderApp();
+    ui.panel = "settings";
+    await new Promise((r) => setTimeout(r, 60));
+    const blue = Array.from(target.querySelectorAll<HTMLButtonElement>(".icon-options button")).find((b) =>
+      b.textContent!.includes("海藍"),
+    )!;
+    blue.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const sent = calls.find(([cmd]) => cmd === "app_icon_set");
+    expect(sent, "app_icon_set not invoked").toBeTruthy();
+    expect(sent![1]).toEqual({ choice: "blue" });
+    invokeMock.mockImplementation(invokeMockImpl);
+    await unmount(app);
+    document.body.innerHTML = "";
   });
 });
 

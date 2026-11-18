@@ -45,6 +45,10 @@
     }
   }
 
+  // Escape from an unfocused page closes the bar via App.svelte's window
+  // handler; the input's own handler covers the focused case.
+
+
   function onInput() {
     count = null;
     find(false);

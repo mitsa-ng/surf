@@ -19,7 +19,8 @@ pub fn emit_tabs(app: &AppHandle) {
     let snapshot = {
         let model = state::lock(&state.model);
         let split = *state::lock(&state.split);
-        state::TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id(), split }
+        let blocked = state::lock(&state.blocked_nav).clone();
+        state::TabsSnapshot { tabs: model.list().to_vec(), active: model.active_id(), split, blocked }
     };
     let _ = app.emit_to("chrome", TABS_EVENT, &snapshot);
 }
@@ -63,6 +64,8 @@ pub fn notify_tabs_event(app: &AppHandle, name: &str, payload: serde_json::Value
 fn record_navigation(app: &AppHandle, id: TabId, url: &Url) {
     let changed = {
         let state = app.state::<BrowserState>();
+        // A committed navigation retires any pending blocked notice.
+        *state::lock(&state.blocked_nav) = None;
         // The model guard must drop before emit_tabs re-locks the model.
         let changed = state::lock(&state.model).record_navigation(id, url.clone());
         changed
@@ -158,6 +161,20 @@ fn nav_verdict(app: &AppHandle, id: TabId, url: &Url) -> bool {
     if !allowed {
         eprintln!("[nav-filter] blocked {url}");
         state::lock(&state.model).set_loading(id, false);
+        // Stash the block on the snapshot instead of a bespoke event: a
+        // same-thread/deferred emit to the chrome raced on macOS, while
+        // the tabs channel demonstrably delivers live from this exact
+        // context (loading flags clear through it).
+        static BLOCK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = BLOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *state::lock(&state.blocked_nav) = Some(crate::state::BlockedNav {
+            tab: id.0 as u32,
+            url: url.to_string(),
+            seq,
+        });
+        // The stash rides every snapshot until a navigation commits (see
+        // record_navigation); the UI dedups by seq, so follow-up tab
+        // updates neither re-toast nor wipe the notice.
         emit_tabs(app);
     }
     allowed

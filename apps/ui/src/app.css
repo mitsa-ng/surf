@@ -87,3 +87,32 @@ input:focus-visible {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* Blocked-navigation toast: created imperatively by showBlockedNav (the
+   chrome names the host a filtered navigation tried to open). Quiet and
+   greyscale per DESIGN; no accent, no shadow, and it leaves on its own.
+   Desktop parks it over the toolbar row inside the chrome's own 87px
+   stack — anything below 87px is clipped by the native webview — and
+   lets clicks pass through. Mobile keeps it under the status bar and
+   tappable rows stay above it via the overlay lift. */
+.blocked-toast {
+  position: fixed;
+  top: 49px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 45;
+  pointer-events: none;
+  max-width: 80vw;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 7px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.blocked-toast.mobile {
+  top: calc(12px + env(safe-area-inset-top));
+}

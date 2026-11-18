@@ -9,6 +9,7 @@
   let focused = $state(false);
   let live = $state<string[]>([]);
   let suggestTimer: ReturnType<typeof setTimeout> | undefined;
+  let inputEl: HTMLInputElement | undefined = $state();
 
   $effect(() => {
     const shown = displayAddress(activeTab()?.url ?? null);
@@ -160,13 +161,20 @@
   <input
     class="address"
     bind:value={input}
+    bind:this={inputEl}
     type="text"
     enterkeyhint="go"
     spellcheck="false"
     autocomplete="off"
     placeholder="搜尋或輸入網址"
     aria-label="網址與搜尋"
-    onfocus={() => (focused = true)}
+    onfocus={() => {
+      focused = true;
+      // Chrome parity (the desktop toolbar does the same): one tap
+      // selects the existing text so typing replaces it; a second tap
+      // into the already-focused field positions the caret normally.
+      requestAnimationFrame(() => inputEl?.select());
+    }}
     onblur={() => (focused = false)}
     onkeydown={(e) => {
       if (e.key === "Enter") submit();

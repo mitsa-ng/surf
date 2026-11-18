@@ -42,6 +42,21 @@ pub struct TabsSnapshot {
     pub active: Option<TabId>,
     /// Split view members, if active.
     pub split: Option<(TabId, TabId)>,
+    /// The top-level navigation the filter just rejected, so the chrome
+    /// can name what stopped it instead of reading as a dead browser.
+    /// Rides the tabs snapshot (a channel proven to deliver live) rather
+    /// than a bespoke event that raced on macOS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<BlockedNav>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct BlockedNav {
+    pub tab: u32,
+    pub url: String,
+    /// Bumps on every fresh block so the UI can tell a new rejection from
+    /// the follow-up snapshots that still carry this one.
+    pub seq: u64,
 }
 
 pub struct BrowserState {
@@ -78,6 +93,9 @@ pub struct BrowserState {
     /// Recently closed tabs (for Cmd+Shift+T), newest last. Private tabs
     /// are never recorded.
     pub recently_closed: Mutex<Vec<crate::state::ClosedTabInfo>>,
+    /// The most recent filter-rejected navigation; cleared when a real
+    /// navigation commits (see record_navigation).
+    pub blocked_nav: Mutex<Option<BlockedNav>>,
     /// Split view: two tab ids shown side by side (desktop only, not
     /// persisted; a view state, not session state).
     pub split: Mutex<Option<(TabId, TabId)>>,
@@ -139,6 +157,7 @@ impl BrowserState {
             favicons: crate::favicon::FaviconCache::new(favicon_dir),
             pending_pw: Mutex::new(None),
             recently_closed: Mutex::new(Vec::new()),
+            blocked_nav: Mutex::new(None),
             split: Mutex::new(None),
             #[cfg(mobile)]
             // 220 physical px ≈ 81 CSS px at 2.625 density, the measured
@@ -219,6 +238,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     crate::deep_links::wire(&handle);
+    // The running app's icon follows the stored preference (auto =
+    // system theme); the watcher covers theme flips while running.
+    crate::app_icon::apply_current(&handle);
+    crate::app_icon::start_watcher(&handle);
     {
         let state = app.state::<BrowserState>();
         let filters = crate::nav_filter::load_filters(&lock(&state.db));

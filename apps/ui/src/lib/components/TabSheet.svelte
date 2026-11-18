@@ -280,7 +280,9 @@
   .close {
     display: grid;
     place-items: center;
-    width: 36px;
+    /* 44px square: the thumb-reachable tap-target minimum; the glyph
+       stays small so the row's hierarchy does not change. */
+    width: 44px;
     height: 44px;
     border-radius: 8px;
     color: var(--text-secondary);

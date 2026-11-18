@@ -31,7 +31,13 @@ tauri-plugin-dialog = "2"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSError", "NSString"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSImage",
+    "NSResponder",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSError", "NSString", "NSUserDefaults"] }
 objc2-web-kit = { version = "0.3", features = [
     "WKContentRuleList",
     "WKContentRuleListStore",
